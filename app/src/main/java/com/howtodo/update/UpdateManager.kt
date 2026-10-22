@@ -142,6 +142,12 @@ class UpdateManager(private val context: Context) {
         }
     }
 
+    /** 「稍后」：记录跳过的版本号，本版本静默检查不再打扰 */
+    fun dismiss(info: UpdateInfo) {
+        prefs.edit().putInt(KEY_SKIP_CODE, info.versionCode).apply()
+        _state.value = UpdateUiState.Idle
+    }
+
     fun toIdle() {
         if (_state.value is UpdateUiState.Downloaded) return
         if (_state.value is UpdateUiState.Downloading) return

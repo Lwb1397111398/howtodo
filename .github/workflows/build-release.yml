@@ -1,0 +1,63 @@
+name: Build and Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for version numbering)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Build release APK
+        run: gradle --no-daemon assembleRelease
+
+      - name: Publish rolling "latest" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 与 app/build.gradle.kts 中公式保持一致：versionCode = 提交数 + 4
+          COMMIT_COUNT=$(git rev-list --count HEAD)
+          VC=$((COMMIT_COUNT + 4))
+          VN="0.1.${VC}"
+
+          APK_SRC="app/build/outputs/apk/release/app-release.apk"
+          # 固定资产名：App 端按 .apk 结尾匹配，镜像直链可长期不变
+          cp "$APK_SRC" howtodo-release.apk
+
+          # 第一行元数据注释是 App 更新检查的唯一解析入口（GitHub 页面渲染不可见）
+          {
+            printf '<!-- appupdate versionCode=%s versionName=%s -->\n' "$VC" "$VN"
+            printf '\nHowTodo %s\n\n更新内容：\n' "$VN"
+            git log -5 --pretty=format:'- %s'
+          } > notes.md
+
+          if gh release view latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload latest howtodo-release.apk --clobber --repo "$GITHUB_REPOSITORY"
+            gh release edit latest --title "HowTodo ${VN}" --notes-file notes.md --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create latest howtodo-release.apk --title "HowTodo ${VN}" --notes-file notes.md --repo "$GITHUB_REPOSITORY"
+          fi
+          echo "Published HowTodo ${VN} (versionCode=${VC})"
