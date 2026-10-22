@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <files-path name="materials" path="materials/" />
+    <files-path name="thumbs" path="thumbs/" />
     <cache-path name="cache" path="." />
+    <cache-path name="updates" path="updates/" />
 </paths>

@@ -7,14 +7,24 @@ plugins {
 
 android {
     namespace = "com.howtodo"
+
+// 版本号 = Git 提交数。每次推送 main 自动 +1，本机与 CI 对同一提交算出同一个号。
+// BASE_OFFSET = 4：保证首个自动版本(versionCode>=3)高于已发布的 v0.1.0(=1)、v0.1.1(=2)。
+fun computeCommitCount(): Int = runCatching {
+    providers.exec { commandLine("git", "rev-list", "--count", "HEAD") }
+        .standardOutput.asText.get().trim().toInt()
+}.getOrDefault(0)
+
+val commitCount = computeCommitCount()
+val baseVersionOffset = 4
     compileSdk = 36
 
     defaultConfig {
         applicationId = "com.howtodo"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.1.1"
+        versionCode = commitCount + baseVersionOffset
+        versionName = "0.1.${commitCount + baseVersionOffset}"
         vectorDrawables { useSupportLibrary = true }
     }
 

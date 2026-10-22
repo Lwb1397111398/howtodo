@@ -25,6 +25,7 @@ class App : Application() {
             runCatching { container.alarmScheduler.rescheduleAll() }
             // 上次没解析完的材料续上
             runCatching { container.importManager.parsePending() }
+            runCatching { container.updateManager.autoCheck() }
         }
     }
 }

@@ -53,12 +53,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.app.NotificationManagerCompat
+import com.howtodo.BuildConfig
 import com.howtodo.data.db.AiRole
 import com.howtodo.data.db.ProviderEntity
 import com.howtodo.data.db.RoleBindingEntity
 import com.howtodo.data.repo.ReminderRepo
 import com.howtodo.ui.common.ConfirmDialog
 import com.howtodo.ui.common.container
+import com.howtodo.ui.update.UpdateDialogHost
 import com.howtodo.ui.components.TagChip
 import com.howtodo.util.BackupManager
 import kotlinx.coroutines.Dispatchers
@@ -85,6 +87,7 @@ fun SettingsScreen(onOpenProvider: (String) -> Unit) {
     var message by remember { mutableStateOf<String?>(null) }
     var askRestart by remember { mutableStateOf(false) }
     var materialsKb by remember { mutableStateOf(0L) }
+    var showTokenDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         digestEnabled = c.reminderRepo.digestEnabled()
@@ -360,18 +363,41 @@ fun SettingsScreen(onOpenProvider: (String) -> Unit) {
             item {
                 Surface(shape = RoundedCornerShape(12.dp), color = MaterialTheme.colorScheme.surface) {
                     Column(modifier = Modifier.padding(14.dp)) {
-                        Text("工作如何做  v0.1.0", style = MaterialTheme.typography.bodyMedium)
+                        // 版本与自更新说明
+                        Text("工作如何做  v" + BuildConfig.VERSION_NAME, style = MaterialTheme.typography.bodyMedium)
                         Spacer(Modifier.height(4.dp))
                         Text(
                             "材料只存在本机，API Key 用系统密钥库加密。所有 AI 变更都需要你确认才会生效。",
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                        HorizontalDivider(
+                            modifier = Modifier.padding(vertical = 6.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                        )
+                        // 手动检查更新入口：联网查 GitHub Release，弹窗提示新版并引导下载安装
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { c.updateManager.checkNow() }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "检查更新",
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f)
+                            )
+                            Icon(
+                                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 }
             }
-        }
-    }
 
     editingRole?.let { role ->
         RoleBindDialog(
@@ -387,6 +413,39 @@ fun SettingsScreen(onOpenProvider: (String) -> Unit) {
             }
         )
     }
+
+    if (showTokenDialog) {
+        var tokenText by remember { mutableStateOf(c.updateManager.loadTokenPlain() ?: "") }
+        AlertDialog(
+            onDismissRequest = { showTokenDialog = false },
+            title = { Text("填写更新令牌") },
+            text = {
+                Column {
+                    Text(
+                        "仓库为私有仓库时，检查更新需要 GitHub 只读令牌（Fine-grained PAT，仅需 Contents 读取权限）。",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = tokenText,
+                        onValueChange = { tokenText = it },
+                        label = { Text("GitHub Personal Access Token") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    c.updateManager.saveToken(tokenText.trim())
+                    showTokenDialog = false
+                }) { Text("保存") }
+            },
+            dismissButton = { TextButton(onClick = { showTokenDialog = false }) { Text("取消") } }
+        )
+    }
+
+    UpdateDialogHost(c.updateManager)
 
     message?.let { msg ->
         AlertDialog(

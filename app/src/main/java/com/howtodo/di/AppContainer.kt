@@ -19,6 +19,7 @@ import com.howtodo.ingest.VisionOcr
 import com.howtodo.notify.AlarmScheduler
 import com.howtodo.rag.Answerer
 import com.howtodo.rag.Retriever
+import com.howtodo.update.UpdateManager
 import com.howtodo.util.Storage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -56,6 +57,7 @@ class AppContainer(context: Context) {
     val retriever = Retriever(db, router)
     val answerer = Answerer(db, retriever, router, knowledgeRepo)
     val alarmScheduler = AlarmScheduler(appContext, reminderRepo)
+    val updateManager = UpdateManager(appContext)
 
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 }
