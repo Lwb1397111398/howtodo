@@ -15,10 +15,10 @@ import java.net.URL
 class UpdateChecker(private val repoOwner: String, private val repoName: String) {
 
     companion object {
-        /** 能透传 GitHub API 的镜像（ghfast.top / ghproxy.net 只透传下载，不进查询链） */
-        val QUERY_PREFIXES = listOf("", "https://gh-proxy.com/", "https://gh-proxy.org/")
+        /** 能透传 GitHub API 的镜像（2026-10-22 实测：gh-proxy.org 已不再透传 API，降级为下载候选；ghfast.top / ghproxy.net 本就只透传下载） */
+        val QUERY_PREFIXES = listOf("", "https://gh-proxy.com/")
         /** 仅透传下载的镜像，只进下载候选，不用于查询 */
-        val DOWNLOAD_ONLY_PREFIXES = listOf("https://ghfast.top/", "https://ghproxy.net/")
+        val DOWNLOAD_ONLY_PREFIXES = listOf("https://gh-proxy.org/", "https://ghfast.top/", "https://ghproxy.net/")
         private const val UA = "HowTodo-Updater"
     }
 
