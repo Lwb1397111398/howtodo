@@ -1,0 +1,139 @@
+package com.howtodo.data.repo
+
+import com.howtodo.data.db.AppDatabase
+import com.howtodo.data.db.ReminderEntity
+import com.howtodo.data.db.ReminderKind
+import com.howtodo.data.db.ReminderState
+import com.howtodo.data.db.TaskEntity
+import com.howtodo.data.db.TaskStatus
+import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalTime
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+
+/**
+ * 提醒计划生成。
+ *
+ * 每个任务默认三档：D-3（09:00）、D-1（09:00）、当天（有具体时刻则提前 2 小时，否则 09:00）。
+ * 用 dedupeKey = taskId|kind|日期 保证幂等：反复重排不会产生重复通知。
+ */
+class ReminderRepo(private val db: AppDatabase) {
+
+    private val dao get() = db.reminderDao()
+
+    companion object {
+        const val KEY_DIGEST_ENABLED = "digest.enabled"
+        const val KEY_DIGEST_HOUR = "digest.hour"
+        const val KEY_DIGEST_MINUTE = "digest.minute"
+        const val KEY_D3_ENABLED = "remind.d3"
+        const val KEY_D1_ENABLED = "remind.d1"
+        const val KEY_D0_ENABLED = "remind.d0"
+        const val DEFAULT_DIGEST_HOUR = 8
+        const val DEFAULT_DIGEST_MINUTE = 0
+    }
+
+    private val dayFmt = DateTimeFormatter.ofPattern("yyyy-MM-dd")
+
+    private fun zone(): ZoneId = ZoneId.systemDefault()
+
+    suspend fun scheduled(): List<ReminderEntity> = dao.scheduled()
+
+    suspend fun byTask(taskId: String) = dao.byTask(taskId)
+
+    suspend fun markFired(id: Long) = dao.setState(id, ReminderState.FIRED)
+
+    suspend fun cancelTask(taskId: String) = dao.cancelByTask(taskId)
+
+    suspend fun purgeOld() {
+        dao.purgeOld(System.currentTimeMillis() - 30L * 24 * 3600_000)
+    }
+
+    /** 为单个任务重建提醒（先清后建，幂等） */
+    suspend fun rescheduleTask(task: TaskEntity): List<ReminderEntity> {
+        dao.cancelByTask(task.id)
+        if (task.status != TaskStatus.TODO) return emptyList()
+        val due = task.dueAt ?: return emptyList()
+
+        val d3 = boolSetting(KEY_D3_ENABLED, true)
+        val d1 = boolSetting(KEY_D1_ENABLED, true)
+        val d0 = boolSetting(KEY_D0_ENABLED, true)
+
+        val now = System.currentTimeMillis()
+        val dueDate = Instant.ofEpochMilli(due).atZone(zone()).toLocalDate()
+        val out = ArrayList<ReminderEntity>()
+
+        suspend fun add(kind: String, triggerAt: Long) {
+            if (triggerAt <= now + 60_000) return
+            val key = "${task.id}|$kind|${dayFmt.format(Instant.ofEpochMilli(triggerAt).atZone(zone()).toLocalDate())}"
+            val entity = ReminderEntity(
+                taskId = task.id,
+                projectId = task.projectId,
+                kind = kind,
+                triggerAt = triggerAt,
+                requestCode = (key.hashCode() and 0x7FFFFFFF),
+                dedupeKey = key
+            )
+            val id = dao.insert(entity)
+            if (id > 0) out.add(entity.copy(id = id))
+        }
+
+        if (d3) add(ReminderKind.D3, at(dueDate.minusDays(3), LocalTime.of(9, 0)))
+        if (d1) add(ReminderKind.D1, at(dueDate.minusDays(1), LocalTime.of(9, 0)))
+        if (d0) {
+            val t = if (task.dueHasTime) due - 2 * 3600_000L else at(dueDate, LocalTime.of(9, 0))
+            add(ReminderKind.D0, t)
+        }
+        return out
+    }
+
+    suspend fun rescheduleAll(): Int {
+        var n = 0
+        db.taskDao().allOpen().forEach { t ->
+            n += rescheduleTask(t).size
+        }
+        return n
+    }
+
+    suspend fun digestTime(): Pair<Int, Int> {
+        val h = db.settingDao().get(KEY_DIGEST_HOUR)?.toIntOrNull() ?: DEFAULT_DIGEST_HOUR
+        val m = db.settingDao().get(KEY_DIGEST_MINUTE)?.toIntOrNull() ?: DEFAULT_DIGEST_MINUTE
+        return h to m
+    }
+
+    suspend fun digestEnabled(): Boolean = boolSetting(KEY_DIGEST_ENABLED, true)
+
+    suspend fun setDigestTime(hour: Int, minute: Int) {
+        db.settingDao().put(com.howtodo.data.db.AppSettingEntity(KEY_DIGEST_HOUR, hour.toString()))
+        db.settingDao().put(com.howtodo.data.db.AppSettingEntity(KEY_DIGEST_MINUTE, minute.toString()))
+    }
+
+    suspend fun setDigestEnabled(enabled: Boolean) {
+        db.settingDao().put(com.howtodo.data.db.AppSettingEntity(KEY_DIGEST_ENABLED, enabled.toString()))
+    }
+
+    suspend fun setOffsetEnabled(key: String, enabled: Boolean) {
+        db.settingDao().put(com.howtodo.data.db.AppSettingEntity(key, enabled.toString()))
+    }
+
+    suspend fun isOffsetEnabled(key: String, default: Boolean = true): Boolean = boolSetting(key, default)
+
+    /** 今日概览数据 */
+    suspend fun todayBuckets(): Triple<List<TaskEntity>, List<TaskEntity>, List<TaskEntity>> {
+        val today = LocalDate.now()
+        val start = at(today, LocalTime.MIN)
+        val end = at(today, LocalTime.MAX)
+        val overdue = db.taskDao().overdue()
+        val todayList = db.taskDao().dueBetween(start, end)
+        val soon = db.taskDao().dueBetween(end, end + 3L * 24 * 3600_000)
+        return Triple(overdue, todayList, soon)
+    }
+
+    private suspend fun boolSetting(key: String, default: Boolean): Boolean {
+        val v = db.settingDao().get(key) ?: return default
+        return v.toBooleanStrictOrNull() ?: default
+    }
+
+    private fun at(date: LocalDate, time: LocalTime): Long =
+        date.atTime(time).atZone(zone()).toInstant().toEpochMilli()
+}
