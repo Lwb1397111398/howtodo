@@ -17,13 +17,21 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -296,8 +304,7 @@ fun TaskRow(
 
 /** 进度环：已完成/总数 */
 @Composable
-fun ProgressRing(done: Int, total: Int, size: Int = 44) {
-    val ratio = if (total <= 0) 0f else done.toFloat() / total
+fun ProgressRing(done: Int, total: Int, size: Int = 44) {    val ratio = if (total <= 0) 0f else done.toFloat() / total
     Box(
         modifier = Modifier.size(size.dp),
         contentAlignment = Alignment.Center
@@ -314,5 +321,44 @@ fun ProgressRing(done: Int, total: Int, size: Int = 44) {
             style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
+    }
+}
+
+/**
+ * 材料行的「⋮」操作菜单：重新解析 / 删除。
+ * 解析中的材料不允许再触发重解析，避免两路解析并发抢同一份文件。
+ */
+@Composable
+fun SourceActionsMenu(
+    parsing: Boolean,
+    onReparse: () -> Unit,
+    onDelete: () -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { expanded = true }) {
+            Icon(
+                imageVector = Icons.Filled.MoreVert,
+                contentDescription = "材料操作",
+                modifier = Modifier.size(20.dp)
+            )
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            DropdownMenuItem(
+                text = { Text(if (parsing) "正在解析…" else "重新解析") },
+                enabled = !parsing,
+                onClick = {
+                    expanded = false
+                    onReparse()
+                }
+            )
+            DropdownMenuItem(
+                text = { Text("删除材料", color = MaterialTheme.colorScheme.error) },
+                onClick = {
+                    expanded = false
+                    onDelete()
+                }
+            )
+        }
     }
 }

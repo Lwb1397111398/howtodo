@@ -139,6 +139,20 @@ class ImportManager(
         }
     }
 
+    /**
+     * 重新解析。与 [parseOne] 的区别是**不跳过已解析材料**：先把状态打回 NEW、
+     * 清掉上次的失败原因，再走一遍 [IngestPipeline.ingest]。
+     * 旧 chunk 与倒排索引由 ingest 内部先删后建，不会留下重复片段。
+     */
+    suspend fun reparse(sourceId: String, onProgress: (String) -> Unit = {}) {
+        parseMutex.withLock {
+            val src = db.sourceDao().byId(sourceId) ?: return
+            if (src.status == SourceStatus.PARSING) return
+            db.sourceDao().setStatus(sourceId, SourceStatus.NEW, null)
+            ingest.ingest(sourceId, onProgress = onProgress)
+        }
+    }
+
     suspend fun parsePending(onProgress: (String) -> Unit = {}) {
         val pending = db.sourceDao().pending().filter { it.status == SourceStatus.NEW }
         if (pending.isEmpty()) return

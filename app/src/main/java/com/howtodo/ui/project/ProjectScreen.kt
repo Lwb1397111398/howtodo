@@ -83,6 +83,7 @@ import com.howtodo.ui.common.container
 import com.howtodo.ui.components.DueChip
 import com.howtodo.ui.components.EmptyState
 import com.howtodo.ui.components.SectionHeader
+import com.howtodo.ui.components.SourceActionsMenu
 import com.howtodo.ui.components.TagChip
 import com.howtodo.ui.components.TaskRow
 import com.howtodo.ui.theme.Semantic
@@ -129,6 +130,20 @@ fun ProjectScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var selected by remember { mutableStateOf<Set<String>>(emptySet()) }
     var pasteText by remember { mutableStateOf(false) }
+    var deleteTarget by remember { mutableStateOf<SourceWithProject?>(null) }
+
+    fun reparseSource(id: String) {
+        scope.launch(Dispatchers.IO) {
+            runCatching { c.importManager.reparse(id) }
+        }
+    }
+
+    fun deleteSource(id: String) {
+        selected = selected - id
+        scope.launch(Dispatchers.IO) {
+            runCatching { c.sourceRepo.delete(id) }
+        }
+    }
 
     // 默认选中"还没分析过"的材料
     LaunchedEffect(sources) {
@@ -303,6 +318,8 @@ fun ProjectScreen(
                         }
                     },
                     onImport = { showImport = true },
+                    onReparse = { reparseSource(it) },
+                    onDelete = { deleteTarget = it },
                     busy = busy != null
                 )
                 else -> ChangesTab(proposals = proposals, onOpen = onOpenProposal)
@@ -426,6 +443,21 @@ fun ProjectScreen(
         )
     }
 
+    val toDelete = deleteTarget
+    if (toDelete != null) {
+        ConfirmDialog(
+            title = "删除这份材料？",
+            message = "「${toDelete.source.displayName}」和它的解析结果会一起删掉，删除后不能恢复。原件如果还在手机里，可以重新导入。",
+            confirmText = "删除",
+            danger = true,
+            onDismiss = { deleteTarget = null },
+            onConfirm = {
+                deleteTarget = null
+                deleteSource(toDelete.source.id)
+            }
+        )
+    }
+
     editing?.let { t ->
         TaskEditorDialog(
             task = t.task,
@@ -537,6 +569,8 @@ private fun SourcesTab(
     onOpenPreview: (String) -> Unit,
     onAnalyze: (Set<String>) -> Unit,
     onImport: () -> Unit,
+    onReparse: (String) -> Unit,
+    onDelete: (SourceWithProject) -> Unit,
     busy: Boolean
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
@@ -588,7 +622,9 @@ private fun SourcesTab(
                     s = s,
                     checked = s.source.id in selected,
                     onToggle = { onToggleSelect(s.source.id) },
-                    onOpen = { onOpenPreview(s.source.id) }
+                    onOpen = { onOpenPreview(s.source.id) },
+                    onReparse = { onReparse(s.source.id) },
+                    onDelete = { onDelete(s) }
                 )
             }
         }
@@ -600,7 +636,9 @@ private fun SourceRow(
     s: SourceWithProject,
     checked: Boolean,
     onToggle: () -> Unit,
-    onOpen: () -> Unit
+    onOpen: () -> Unit,
+    onReparse: () -> Unit,
+    onDelete: () -> Unit
 ) {
     val st = s.source.status
     Surface(
@@ -661,11 +699,22 @@ private fun SourceRow(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
                     )
+                    TextButton(
+                        onClick = onReparse,
+                        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp)
+                    ) {
+                        Text("重试解析", style = MaterialTheme.typography.labelMedium)
+                    }
                 }
             }
             IconButton(onClick = onOpen) {
                 Icon(Icons.Outlined.Description, contentDescription = "预览", modifier = Modifier.size(18.dp))
             }
+            SourceActionsMenu(
+                parsing = st == SourceStatus.PARSING,
+                onReparse = onReparse,
+                onDelete = onDelete
+            )
         }
     }
 }

@@ -32,6 +32,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -42,6 +43,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,9 +55,13 @@ import androidx.compose.ui.unit.dp
 import com.howtodo.data.db.ChunkEntity
 import com.howtodo.data.db.SourceEntity
 import com.howtodo.data.db.SourceKind
+import com.howtodo.data.db.SourceStatus
 import com.howtodo.ingest.PdfIngest
+import com.howtodo.ui.common.ConfirmDialog
 import com.howtodo.ui.common.container
+import com.howtodo.ui.components.SourceActionsMenu
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -70,9 +76,27 @@ fun PreviewScreen(sourceId: String, highlightStart: Int, onBack: () -> Unit) {
     var pdfPage by remember { mutableStateOf(0) }
     var pdfCount by remember { mutableStateOf(1) }
     var loading by remember { mutableStateOf(true) }
+    var reload by remember { mutableStateOf(0) }
+    var busy by remember { mutableStateOf<String?>(null) }
+    var showDelete by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
-    LaunchedEffect(sourceId) {
+    fun reparse() {
+        scope.launch {
+            busy = "准备重新解析…"
+            withContext(Dispatchers.IO) {
+                runCatching { c.importManager.reparse(sourceId) { msg -> busy = msg } }
+            }
+            busy = null
+            reload++
+        }
+    }
+
+    LaunchedEffect(sourceId, reload) {
         loading = true
+        chunks = emptyList()
+        bitmap = null
+        pdfPage = 0
         val s = withContext(Dispatchers.IO) { c.sourceRepo.byId(sourceId) }
         source = s
         if (s != null) {
@@ -144,6 +168,14 @@ fun PreviewScreen(sourceId: String, highlightStart: Int, onBack: () -> Unit) {
                             }
                         }
                     }
+                    val s = source
+                    if (s != null) {
+                        SourceActionsMenu(
+                            parsing = s.status == SourceStatus.PARSING,
+                            onReparse = { reparse() },
+                            onDelete = { showDelete = true }
+                        )
+                    }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background
@@ -152,79 +184,165 @@ fun PreviewScreen(sourceId: String, highlightStart: Int, onBack: () -> Unit) {
         },
         containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            when {
-                loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
+            val failed = source?.takeIf { it.status == SourceStatus.FAILED }
+            if (!loading && failed != null) {
+                FailedBanner(
+                    error = failed.error,
+                    retrying = busy != null,
+                    onRetry = { reparse() }
+                )
+            }
 
-                source?.kind == SourceKind.IMAGE || source?.kind == SourceKind.PDF -> {
-                    val bmp = bitmap
-                    if (bmp == null) {
-                        Text(
-                            "无法显示这个文件",
-                            modifier = Modifier.align(Alignment.Center),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    } else {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .verticalScroll(rememberScrollState())
-                                .padding(8.dp)
-                        ) {
-                            Image(
-                                bitmap = bmp.asImageBitmap(),
-                                contentDescription = null,
-                                contentScale = ContentScale.FillWidth,
-                                modifier = Modifier.fillMaxWidth()
+            Box(modifier = Modifier.fillMaxSize()) {
+                when {
+                    loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                    }
+
+                    source?.kind == SourceKind.IMAGE || source?.kind == SourceKind.PDF -> {
+                        val bmp = bitmap
+                        if (bmp == null) {
+                            Text(
+                                "无法显示这个文件",
+                                modifier = Modifier.align(Alignment.Center),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
+                        } else {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .verticalScroll(rememberScrollState())
+                                    .padding(8.dp)
+                            ) {
+                                Image(
+                                    bitmap = bmp.asImageBitmap(),
+                                    contentDescription = null,
+                                    contentScale = ContentScale.FillWidth,
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
                         }
                     }
-                }
 
-                else -> {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(14.dp)
-                    ) {
-                        if (chunks.isEmpty()) {
-                            item { Text("没有抽取到文字内容", color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                        }
-                        items(chunks, key = { it.id }) { ch ->
-                            val highlighted = highlightStart > 0 && highlightStart in ch.charStart..ch.charEnd
-                            Surface(
-                                shape = RoundedCornerShape(8.dp),
-                                color = if (highlighted) MaterialTheme.colorScheme.secondaryContainer
-                                else androidx.compose.ui.graphics.Color.Transparent,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 3.dp)
-                            ) {
-                                Column(modifier = Modifier.padding(8.dp)) {
-                                    if (ch.pageNo != null) {
+                    else -> {
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier.fillMaxSize(),
+                            contentPadding = PaddingValues(14.dp)
+                        ) {
+                            if (chunks.isEmpty()) {
+                                item { Text("没有抽取到文字内容", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                            }
+                            items(chunks, key = { it.id }) { ch ->
+                                val highlighted = highlightStart > 0 && highlightStart in ch.charStart..ch.charEnd
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (highlighted) MaterialTheme.colorScheme.secondaryContainer
+                                    else androidx.compose.ui.graphics.Color.Transparent,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(vertical = 3.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(8.dp)) {
+                                        if (ch.pageNo != null) {
+                                            Text(
+                                                "第${ch.pageNo}页",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                            )
+                                            Spacer(Modifier.height(3.dp))
+                                        }
                                         Text(
-                                            "第${ch.pageNo}页",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                            text = ch.text,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurface
                                         )
-                                        Spacer(Modifier.height(3.dp))
                                     }
-                                    Text(
-                                        text = ch.text,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
                                 }
                             }
                         }
                     }
                 }
+            }
+        }
+    }
+
+    if (busy != null) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { },
+            title = { Text("正在重新解析") },
+            text = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Text(busy ?: "", style = MaterialTheme.typography.bodyMedium)
+                }
+            },
+            confirmButton = {}
+        )
+    }
+
+    if (showDelete) {
+        ConfirmDialog(
+            title = "删除这份材料？",
+            message = "「${source?.displayName ?: "这份材料"}」和它的解析结果会一起删掉，删除后不能恢复。",
+            confirmText = "删除",
+            danger = true,
+            onDismiss = { showDelete = false },
+            onConfirm = {
+                showDelete = false
+                scope.launch {
+                    withContext(Dispatchers.IO) { runCatching { c.sourceRepo.delete(sourceId) } }
+                    onBack()
+                }
+            }
+        )
+    }
+}
+
+/** 解析失败横幅：把失败原因摆在正文上方，并直接给一个重试按钮 */
+@Composable
+private fun FailedBanner(error: String?, retrying: Boolean, onRetry: () -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.errorContainer,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 8.dp)
+    ) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+            Text(
+                text = "这份材料没能解析成文字",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onErrorContainer
+            )
+            if (!error.isNullOrBlank()) {
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    text = error,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.85f),
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(onClick = onRetry, enabled = !retrying) {
+                    Text(if (retrying) "解析中…" else "重新解析")
+                }
+                Spacer(Modifier.width(10.dp))
+                Text(
+                    text = "反复失败时，多半是扫描件太糊或文件加密，可重拍或另存为 PDF 再导入。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.75f),
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
     }

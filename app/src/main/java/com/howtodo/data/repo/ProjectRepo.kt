@@ -1,6 +1,7 @@
 package com.howtodo.data.repo
 
 import com.howtodo.data.db.AppDatabase
+import com.howtodo.data.db.FtsStore
 import com.howtodo.data.db.ProjectEntity
 import com.howtodo.data.db.ProjectStatus
 import com.howtodo.data.db.ProposalViewDao
@@ -96,6 +97,8 @@ class SourceRepo(
     }
 
     suspend fun delete(id: String) {
+        // 倒排索引按 chunk.id 建行，必须趁 chunk 还在时先删；否则搜出来的命中会指向已删材料
+        FtsStore.deleteBySource(db.openHelper.writableDatabase, id)
         db.chunkDao().deleteBySource(id)
         storage.deleteMaterial(id)
         dao.delete(id)

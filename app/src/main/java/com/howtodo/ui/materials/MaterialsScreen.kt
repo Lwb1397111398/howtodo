@@ -45,9 +45,11 @@ import androidx.compose.ui.unit.dp
 import com.howtodo.data.db.ProjectEntity
 import com.howtodo.data.db.SourceStatus
 import com.howtodo.data.db.SourceWithProject
+import com.howtodo.ui.common.ConfirmDialog
 import com.howtodo.ui.common.container
 import com.howtodo.ui.components.EmptyState
 import com.howtodo.ui.components.LoadingRow
+import com.howtodo.ui.components.SourceActionsMenu
 import com.howtodo.ui.components.TagChip
 import com.howtodo.util.Format
 import kotlinx.coroutines.Dispatchers
@@ -68,8 +70,37 @@ fun MaterialsScreen(onOpenPreview: (String) -> Unit) {
 
     // 分享进来的材料默认落在材料库，需要能归到某项工作，否则工作内检索和 AI 分析都用不上
     var assignTarget by remember { mutableStateOf<SourceWithProject?>(null) }
+    var deleteTarget by remember { mutableStateOf<SourceWithProject?>(null) }
     var allProjects by remember { mutableStateOf<List<ProjectEntity>>(emptyList()) }
     val scope = rememberCoroutineScope()
+
+    fun reparse(id: String) {
+        scope.launch(Dispatchers.IO) {
+            // 失败原因会写回 source.error，状态经 observeAll 自动刷新，这里不额外弹窗
+            runCatching { c.importManager.reparse(id) }
+        }
+    }
+
+    fun delete(id: String) {
+        scope.launch(Dispatchers.IO) {
+            runCatching { c.sourceRepo.delete(id) }
+        }
+    }
+
+    val toDelete = deleteTarget
+    if (toDelete != null) {
+        ConfirmDialog(
+            title = "删除这份材料？",
+            message = "「${toDelete.source.displayName}」和它的解析结果会一起删掉，删除后不能恢复。原件如果还在手机里，可以重新导入。",
+            confirmText = "删除",
+            danger = true,
+            onDismiss = { deleteTarget = null },
+            onConfirm = {
+                deleteTarget = null
+                delete(toDelete.source.id)
+            }
+        )
+    }
 
     LaunchedEffect(assignTarget?.source?.id) {
         if (assignTarget != null) {
@@ -158,7 +189,9 @@ fun MaterialsScreen(onOpenPreview: (String) -> Unit) {
                         SourceRow(
                             s = s,
                             onClick = { onOpenPreview(s.source.id) },
-                            onAssign = { assignTarget = s }
+                            onAssign = { assignTarget = s },
+                            onReparse = { reparse(s.source.id) },
+                            onDelete = { deleteTarget = s }
                         )
                     }
                 }
@@ -219,7 +252,13 @@ fun MaterialsScreen(onOpenPreview: (String) -> Unit) {
 }
 
 @Composable
-private fun SourceRow(s: SourceWithProject, onClick: () -> Unit, onAssign: () -> Unit) {
+private fun SourceRow(
+    s: SourceWithProject,
+    onClick: () -> Unit,
+    onAssign: () -> Unit,
+    onReparse: () -> Unit,
+    onDelete: () -> Unit
+) {
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surface,
@@ -282,7 +321,29 @@ private fun SourceRow(s: SourceWithProject, onClick: () -> Unit, onAssign: () ->
                         color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
                     )
                 }
+                // 失败原因：不说清楚「卡在哪一步」，用户没法决定是重试还是换个格式
+                if (s.source.status == SourceStatus.FAILED && !s.source.error.isNullOrBlank()) {
+                    Spacer(Modifier.height(3.dp))
+                    Text(
+                        text = s.source.error.orEmpty(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    TextButton(
+                        onClick = onReparse,
+                        contentPadding = PaddingValues(horizontal = 0.dp, vertical = 0.dp)
+                    ) {
+                        Text("重试解析", style = MaterialTheme.typography.labelMedium)
+                    }
+                }
             }
+            SourceActionsMenu(
+                parsing = s.source.status == SourceStatus.PARSING,
+                onReparse = onReparse,
+                onDelete = onDelete
+            )
         }
     }
 }

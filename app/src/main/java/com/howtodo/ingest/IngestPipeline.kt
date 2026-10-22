@@ -92,7 +92,11 @@ class IngestPipeline(
             return Result.failure(IllegalStateException("内容过短"))
         }
 
-        // 重建索引
+        // 重建索引。先确认材料还在：OCR 可能跑很久，期间用户可能已经把这份材料删了，
+        // 那时再插 chunk 会留下指向空 source 的孤儿片段，污染检索结果。
+        if (sourceDao.byId(source.id) == null) {
+            return Result.failure(IllegalStateException("材料已被删除"))
+        }
         db.chunkDao().deleteBySource(source.id)
         val raw = db.openHelper.writableDatabase
         FtsStore.deleteBySource(raw, source.id)
