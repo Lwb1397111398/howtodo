@@ -32,7 +32,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -88,7 +87,6 @@ fun SettingsScreen(onOpenProvider: (String) -> Unit) {
     var message by remember { mutableStateOf<String?>(null) }
     var askRestart by remember { mutableStateOf(false) }
     var materialsKb by remember { mutableStateOf(0L) }
-    var showTokenDialog by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         digestEnabled = c.reminderRepo.digestEnabled()
@@ -414,37 +412,6 @@ fun SettingsScreen(onOpenProvider: (String) -> Unit) {
                     editingRole = null
                 }
             }
-        )
-    }
-
-    if (showTokenDialog) {
-        var tokenText by remember { mutableStateOf(c.updateManager.loadTokenPlain() ?: "") }
-        AlertDialog(
-            onDismissRequest = { showTokenDialog = false },
-            title = { Text("填写更新令牌") },
-            text = {
-                Column {
-                    Text(
-                        "仓库为私有仓库时，检查更新需要 GitHub 只读令牌（Fine-grained PAT，仅需 Contents 读取权限）。",
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    OutlinedTextField(
-                        value = tokenText,
-                        onValueChange = { tokenText = it },
-                        label = { Text("GitHub Personal Access Token") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    c.updateManager.saveToken(tokenText.trim())
-                    showTokenDialog = false
-                }) { Text("保存") }
-            },
-            dismissButton = { TextButton(onClick = { showTokenDialog = false }) { Text("取消") } }
         )
     }
 

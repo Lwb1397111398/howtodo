@@ -26,13 +26,13 @@ class UpdateChecker(private val repoOwner: String, private val repoName: String)
         data class Available(val info: UpdateInfo) : Result()
         /** 云端存在发布但版本不比本机新 */
         data object NoUpdate : Result()
-        /** 所有通道都查不到（404）：私有仓库需配只读令牌，或云端尚无发布 */
+        /** 所有通道都查不到（404）：云端尚未发布 Release */
         data object Unpublished : Result()
         /** 有源连不上/被拒（非 404）：网络问题，别误导用户等 CI */
         data class NetworkError(val message: String) : Result()
     }
 
-    fun check(localVersionCode: Int, token: String?): Result {
+    fun check(localVersionCode: Int): Result {
         var saw404 = false
         var lastError = ""
         for (prefix in QUERY_PREFIXES) {
@@ -45,10 +45,6 @@ class UpdateChecker(private val repoOwner: String, private val repoName: String)
                     // GitHub API 强制要求 User-Agent，缺了直接 403
                     setRequestProperty("User-Agent", UA)
                     setRequestProperty("Accept", "application/vnd.github+json")
-                    if (!token.isNullOrBlank()) {
-                        // 私有仓库：匿名请求一律 404，需带 Contents:Read 的 Fine-grained 令牌
-                        setRequestProperty("Authorization", "Bearer $token")
-                    }
                 }
                 when (conn.responseCode) {
                     200 -> {
@@ -62,7 +58,6 @@ class UpdateChecker(private val repoOwner: String, private val repoName: String)
                             Result.NoUpdate
                         }
                     }
-                    401 -> return Result.NetworkError("更新令牌无效，请在设置里重新填写")
                     403 -> { lastError = "访问被限流（HTTP 403）"; continue }
                     404 -> { saw404 = true; continue }
                     else -> { lastError = "HTTP " + conn.responseCode; continue }
