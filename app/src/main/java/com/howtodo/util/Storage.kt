@@ -20,6 +20,9 @@ class Storage(private val context: Context) {
     companion object {
         /** 单文件导入上限：超过会拖垮视觉解析与内存 */
         const val MAX_IMPORT_BYTES = 80L * 1024 * 1024
+
+        /** raw_llm 原始报文的保留份数上限 */
+        const val RAW_KEEP = 50
     }
 
     /** 文件超过导入上限。调用方应向用户明示原因，不要当作普通读取失败静默吞掉 */
@@ -152,6 +155,11 @@ class Storage(private val context: Context) {
         val f = File(rawDir, name)
         try {
             f.writeText(content, Charsets.UTF_8)
+            // 每次分析落一份完整报文，不清理会无限增长；只留最近 50 份
+            rawDir.listFiles()?.filter { it.isFile }
+                ?.sortedByDescending { it.lastModified() }
+                ?.drop(RAW_KEEP)
+                ?.forEach { it.delete() }
         } catch (_: Throwable) {
         }
         return f.absolutePath

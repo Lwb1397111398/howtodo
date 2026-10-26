@@ -40,6 +40,8 @@ class IngestPipeline(
         sourceDao.setStatus(sourceId, SourceStatus.PARSING)
         var usedVision = false
         var pageCount = 0
+        // 视觉识别的部分失败明细（某几页失败/超页截断）；全部失败时直接 FAILED 走异常路径
+        val partialNotes = ArrayList<String>()
 
         val text: String = try {
             when (source.kind) {
@@ -49,21 +51,16 @@ class IngestPipeline(
                     val prepared = ImageIngest.prepare(file)
                         ?: throw IllegalStateException("图片解码失败")
                     pageCount = 1
-                    vision.transcribeSingle(prepared, source.displayName).getOrThrow()
+                    vision.transcribeSingle(prepared, source.displayName).getOrThrow().text
                 }
 
                 SourceKind.PDF -> {
                     onProgress("识别 PDF…")
                     usedVision = true
-                    val pages = ArrayList<VisionOcr.Page>()
-                    PdfIngest.renderPages(file, pdfMaxPages) { idx, prepared ->
-                        pages.add(VisionOcr.Page(idx, prepared))
-                    }
-                    pageCount = pages.size
-                    if (pages.isEmpty()) throw IllegalStateException("PDF 无法渲染，可能已加密或损坏")
-                    vision.transcribe(pages, source.displayName) { done, total ->
-                        onProgress("识别 PDF 第 $done/$total 页…")
-                    }.getOrThrow()
+                    val ocr = transcribePdf(file, source.displayName, pdfMaxPages, onProgress)
+                    pageCount = ocr.rendered
+                    partialNotes.addAll(ocr.failures)
+                    ocr.text
                 }
 
                 // 其余一律走「按内容嗅探」：docx/doc/rtf/网页另存的 doc、xls/xlsx、ppt/pptx、odt、txt…
@@ -86,7 +83,13 @@ class IngestPipeline(
         }
 
         onProgress("建立索引…")
-        val pieces = Chunker.split(cleaned)
+        // 「【第N页】」标记是转写器自己拼的：扫描清洗后的全文取真实偏移与页号，
+        // 喂给切块器，chunk 的 pageNo 从此有值（引用跳转、提案页都能标页码）
+        val pageMarkers = Regex("【第(\\d+)页】").findAll(cleaned)
+            .map { it.range.first to it.groupValues[1].toInt() }
+            .toList()
+            .ifEmpty { null }
+        val pieces = Chunker.split(cleaned, pageMarkers)
         if (pieces.isEmpty()) {
             sourceDao.setStatus(sourceId, SourceStatus.FAILED, "内容过短")
             return Result.failure(IllegalStateException("内容过短"))
@@ -128,8 +131,71 @@ class IngestPipeline(
             ocr = usedVision
         )
         sourceDao.setIndexed(source.id)
-        sourceDao.setStatus(source.id, SourceStatus.PARSED)
+        // PARSED 但带部分失败明细（某几页识别失败/超页截断）：预览页顶部会展示提示，
+        // 不影响已识别部分正常检索与引用
+        sourceDao.setStatus(
+            source.id,
+            SourceStatus.PARSED,
+            partialNotes.joinToString("；").take(200).ifBlank { null }
+        )
         return Result.success(Outcome(cleaned.length, ids.size, usedVision))
+    }
+
+    private class PdfOcr(val text: String, val failures: List<String>, val rendered: Int)
+
+    /**
+     * 流式转写 PDF：渲染一批（3 页）就交视觉模型转写一批，prepared 用完即弃，
+     * 内存峰值只有一批而不是全部页。
+     */
+    private suspend fun transcribePdf(
+        file: java.io.File,
+        displayName: String,
+        maxPages: Int,
+        onProgress: (String) -> Unit
+    ): PdfOcr = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val pager = PdfIngest.pager(file)
+            ?: throw IllegalStateException("PDF 无法渲染，可能已加密或损坏")
+        val realPages = pager.pageCount
+        val expected = minOf(realPages, maxPages)
+        val texts = HashMap<Int, String?>()
+        val failures = ArrayList<String>()
+        var rendered = 0
+        try {
+            var batch = ArrayList<VisionOcr.Page>(VisionOcr.BATCH_SIZE)
+            while (rendered < maxPages) {
+                val prepared = pager.renderNext() ?: break
+                batch.add(VisionOcr.Page(rendered, prepared))
+                rendered++
+                if (batch.size >= VisionOcr.BATCH_SIZE) {
+                    val (pts, errs) = vision.transcribeBatch(batch, displayName)
+                    pts.forEach { texts[it.index] = it.text }
+                    failures.addAll(errs)
+                    batch = ArrayList(VisionOcr.BATCH_SIZE)
+                    onProgress("识别 PDF 第 $rendered/$expected 页…")
+                }
+            }
+            if (batch.isNotEmpty()) {
+                val (pts, errs) = vision.transcribeBatch(batch, displayName)
+                pts.forEach { texts[it.index] = it.text }
+                failures.addAll(errs)
+                onProgress("识别 PDF 第 $rendered/$expected 页…")
+            }
+        } finally {
+            runCatching { pager.close() }
+        }
+        if (rendered == 0) throw IllegalStateException("PDF 无法渲染，可能已加密或损坏")
+
+        val sb = StringBuilder()
+        for (i in 0 until rendered) {
+            val t = texts[i] ?: continue
+            sb.append("【第").append(i + 1).append("页】\n").append(t).append("\n\n")
+        }
+        val text = sb.toString().trim()
+        if (text.isBlank()) {
+            throw IllegalStateException(failures.firstOrNull()?.take(120) ?: "视觉模型没有返回内容")
+        }
+        if (realPages > rendered) failures.add("PDF 共 $realPages 页，仅识别前 $rendered 页")
+        PdfOcr(text, failures, rendered)
     }
 
     /** 全文（按序拼接），供抽取使用 */

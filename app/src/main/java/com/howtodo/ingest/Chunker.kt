@@ -22,9 +22,10 @@ object Chunker {
 
     /**
      * @param text 全文
-     * @param pageMarkers 可选的页边界（PDF 抽取时按 "【第N页】" 之类标记），为空则整体按段落切
+     * @param pageMarkers 页边界（起点偏移 to 页号），由上游从正文的「【第N页】」标记扫描得到；
+     *   页号不必连续（失败页会被跳过），为空则整体按段落切
      */
-    fun split(text: String, pageMarkers: List<Int>? = null): List<Piece> {
+    fun split(text: String, pageMarkers: List<Pair<Int, Int>>? = null): List<Piece> {
         val clean = text.replace("\r\n", "\n").replace('\u0000', ' ')
         if (clean.isBlank()) return emptyList()
 
@@ -116,11 +117,11 @@ object Chunker {
         return result
     }
 
-    private fun pageOf(charOffset: Int, markers: List<Int>?): Int? {
+    private fun pageOf(charOffset: Int, markers: List<Pair<Int, Int>>?): Int? {
         if (markers.isNullOrEmpty()) return null
-        var page = 1
-        for ((i, m) in markers.withIndex()) {
-            if (charOffset >= m) page = i + 1 else break
+        var page: Int? = null
+        for ((off, no) in markers) {
+            if (charOffset >= off) page = no else break
         }
         return page
     }

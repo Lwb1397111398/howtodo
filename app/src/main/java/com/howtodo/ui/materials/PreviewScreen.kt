@@ -143,12 +143,18 @@ fun PreviewScreen(sourceId: String, highlightStart: Int, onBack: () -> Unit) {
                 },
                 actions = {
                     if (source?.kind == SourceKind.PDF) {
+                        fun flipTo(page: Int) {
+                            val s = source ?: return
+                            scope.launch {
+                                val f = c.storage.materialFile(s.id)
+                                bitmap = withContext(Dispatchers.IO) { PdfIngest.renderOne(f, page) }
+                            }
+                        }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             IconButton(onClick = {
                                 if (pdfPage > 0) {
                                     pdfPage--
-                                    val f = c.storage.materialFile(source!!.id)
-                                    bitmap = PdfIngest.renderOne(f, pdfPage)
+                                    flipTo(pdfPage)
                                 }
                             }, enabled = pdfPage > 0) {
                                 Icon(Icons.Outlined.ChevronLeft, contentDescription = "上一页")
@@ -160,8 +166,7 @@ fun PreviewScreen(sourceId: String, highlightStart: Int, onBack: () -> Unit) {
                             IconButton(onClick = {
                                 if (pdfPage < pdfCount - 1) {
                                     pdfPage++
-                                    val f = c.storage.materialFile(source!!.id)
-                                    bitmap = PdfIngest.renderOne(f, pdfPage)
+                                    flipTo(pdfPage)
                                 }
                             }, enabled = pdfPage < pdfCount - 1) {
                                 Icon(Icons.Outlined.ChevronRight, contentDescription = "下一页")
@@ -196,6 +201,11 @@ fun PreviewScreen(sourceId: String, highlightStart: Int, onBack: () -> Unit) {
                     retrying = busy != null,
                     onRetry = { reparse() }
                 )
+            }
+            // 解析成功但有部分失败明细（某几页识别失败/超页截断）：如实告知，别让用户以为全文都在索引里
+            val partial = source?.takeIf { it.status == SourceStatus.PARSED && !it.error.isNullOrBlank() }
+            if (!loading && partial != null) {
+                PartialBanner(note = partial.error.orEmpty())
             }
 
             Box(modifier = Modifier.fillMaxSize()) {
@@ -302,6 +312,38 @@ fun PreviewScreen(sourceId: String, highlightStart: Int, onBack: () -> Unit) {
                 }
             }
         )
+    }
+}
+
+/** 部分识别失败横幅：材料已可用，但缺了某些页/某些部分 */
+@Composable
+private fun PartialBanner(note: String) {
+    Surface(
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 8.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "⚠ 部分内容未识别",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onTertiaryContainer
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = note,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.85f),
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+        }
     }
 }
 

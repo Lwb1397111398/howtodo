@@ -29,25 +29,23 @@ object PdfIngest {
     }
 
     /**
-     * 渲染前 N 页，交给回调逐页处理。
-     * @return 实际渲染的页数
+     * 流式分页渲染器：一次只渲染一页、用完即弃，解析流水线攒满一批就转写，
+     * 内存峰值从「全部页驻留」降到「一批驻留」。
      */
-    fun renderPages(
-        file: File,
-        maxPages: Int,
-        maxDim: Int = ImageIngest.PDF_MAX_DIM,
-        onPage: (index: Int, prepared: ImageIngest.Prepared) -> Unit
-    ): Int {
-        val renderer = open(file) ?: return 0
-        var rendered = 0
-        try {
-            val count = minOf(renderer.pageCount, maxPages)
-            for (i in 0 until count) {
+    class Pager internal constructor(private val renderer: PdfRenderer) : java.io.Closeable {
+        val pageCount: Int get() = renderer.pageCount
+        private var next = 0
+
+        /** 渲染下一页；返回 null 表示已到末尾（坏页内部跳过，不中断） */
+        fun renderNext(maxDim: Int = ImageIngest.PDF_MAX_DIM): ImageIngest.Prepared? {
+            while (next < renderer.pageCount) {
+                val i = next++
                 val page = try {
                     renderer.openPage(i)
                 } catch (_: Throwable) {
                     continue
                 }
+                var result: ImageIngest.Prepared? = null
                 page.use { p ->
                     val scale = minOf(
                         maxDim.toFloat() / p.width,
@@ -64,23 +62,30 @@ object PdfIngest {
                     bmp.eraseColor(Color.WHITE)
                     try {
                         p.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                        ImageIngest.prepareBitmap(bmp, maxDim)?.let { prepared ->
-                            onPage(i, prepared)
-                            rendered++
-                        }
+                        result = ImageIngest.prepareBitmap(bmp, maxDim)
                     } catch (_: Throwable) {
                     } finally {
                         bmp.recycle()
                     }
                 }
+                if (result != null) return result
             }
-        } finally {
+            return null
+        }
+
+        override fun close() {
             try {
                 renderer.close()
             } catch (_: Throwable) {
             }
         }
-        return rendered
+    }
+
+    fun pager(file: File): Pager? = try {
+        val pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+        Pager(PdfRenderer(pfd))
+    } catch (_: Throwable) {
+        null
     }
 
     /** 仅渲染指定页，用于预览 */

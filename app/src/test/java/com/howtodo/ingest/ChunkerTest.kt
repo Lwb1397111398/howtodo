@@ -59,7 +59,8 @@ class ChunkerTest {
     @Test
     fun `页标记能映射到页码`() {
         val src = "第一页的内容。\n第二页的内容。"
-        val pieces = Chunker.split(src, pageMarkers = listOf(0, 8))
+        // 标记 = (起点偏移 to 页号)；偏移 8 是「第二页」所在行
+        val pieces = Chunker.split(src, pageMarkers = listOf(0 to 1, 8 to 2))
         assertTrue(pieces.isNotEmpty())
         assertTrue(pieces.first().pageNo == 1)
     }

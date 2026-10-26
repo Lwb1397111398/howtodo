@@ -333,7 +333,10 @@ fun ProjectScreen(
                 scope.launch {
                     busy = "保存文字…"
                     val id = c.importManager.importText(text, "粘贴的通知", projectId)
-                    c.importManager.parseOne(listOf(id)) { m -> busy = m }
+                    // 解析涉及读文件/Zip/正则，全程留在 IO 线程，别卡主线程
+                    withContext(Dispatchers.IO) {
+                        c.importManager.parseOne(listOf(id)) { m -> busy = m }
+                    }
                     busy = null
                     selected = selected + id
                     pasteText = false
