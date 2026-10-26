@@ -117,12 +117,15 @@ class Retriever(
         if (ordered.isEmpty()) return emptyList()
 
         // 3) 重排：位置分 + 关键词覆盖率 + 新鲜度
+        // 来源批量取（逐条 byId 是 N+1），关键词归一化每个只算一次
         val now = System.currentTimeMillis()
-        val names = HashMap<String, String>()
+        val srcMap = db.sourceDao().byIds(ordered.map { it.sourceId }.distinct()).associateBy { it.id }
+        val kwNorms = keywords.map { Bigram.normalize(it) }
         val hits = ordered.mapIndexed { idx, c ->
-            val src = db.sourceDao().byId(c.sourceId)
-            val name = names.getOrPut(c.sourceId) { src?.displayName ?: "材料" }
-            val coverage = Bigram.coverage(keywords, c.text)
+            val src = srcMap[c.sourceId]
+            val normText = Bigram.normalize(c.text)
+            val matched = kwNorms.count { normText.contains(it) }
+            val coverage = matched.toDouble() / keywords.size
             val rankScore = 1.0 - (idx.toDouble() / (ordered.size + 1))
             val ageDays = ((now - (src?.importedAt ?: now)) / 86_400_000.0).coerceAtLeast(0.0)
             val recency = 1.0 / (1.0 + ageDays / 60.0)
@@ -134,9 +137,9 @@ class Retriever(
             Hit(
                 chunk = c,
                 score = score,
-                sourceName = name,
+                sourceName = src?.displayName ?: "材料",
                 sourceId = c.sourceId,
-                matchedKeywords = keywords.count { Bigram.normalize(c.text).contains(Bigram.normalize(it)) }
+                matchedKeywords = matched
             )
         }.sortedByDescending { it.score }
 

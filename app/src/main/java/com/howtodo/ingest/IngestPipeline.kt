@@ -198,19 +198,6 @@ class IngestPipeline(
         PdfOcr(text, failures, rendered)
     }
 
-    /** 全文（按序拼接），供抽取使用 */
-    suspend fun fullText(sourceIds: List<String>): String {
-        val sb = StringBuilder()
-        sourceIds.forEach { sid ->
-            val src = db.sourceDao().byId(sid) ?: return@forEach
-            val chunks = db.chunkDao().bySource(sid)
-            if (chunks.isEmpty()) return@forEach
-            sb.append("\n=== 《").append(src.displayName).append("》 ===\n")
-            chunks.forEach { sb.append(it.text).append('\n') }
-        }
-        return sb.toString().trim()
-    }
-
     private fun cleanup(text: String): String {
         var t = text.replace("\r\n", "\n").replace('\u0000', ' ')
         t = t.replace(Regex("[ \\t\\u3000]{2,}"), "  ")

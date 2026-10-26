@@ -53,13 +53,14 @@ class AppContainer(context: Context) {
     val db: AppDatabase = AppDatabase.build(appContext)
     val storage = Storage(appContext)
 
-    val projectRepo = ProjectRepo(db)
+    val reminderRepo = ReminderRepo(db)
+    val alarmScheduler = AlarmScheduler(appContext, reminderRepo)
+    // ProjectRepo 需要 alarmScheduler：删工作后按 requestCode 撤掉 AlarmManager 里遗留的闹钟
+    val projectRepo = ProjectRepo(db, storage, alarmScheduler)
     val sourceRepo = SourceRepo(db, storage)
     val providerRepo = ProviderRepo(db)
     val knowledgeRepo = KnowledgeRepo(db)
     val chatRepo = ChatRepo(db)
-    val reminderRepo = ReminderRepo(db)
-    val alarmScheduler = AlarmScheduler(appContext, reminderRepo)
     // TaskRepo 依赖 reminderRepo/alarmScheduler：取消任务撤提醒、重开任务补排提醒
     val taskRepo = TaskRepo(db, reminderRepo, alarmScheduler)
     val proposalRepo = ProposalRepo(db)

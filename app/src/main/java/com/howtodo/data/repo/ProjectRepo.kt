@@ -1,15 +1,21 @@
 package com.howtodo.data.repo
 
+import androidx.room.withTransaction
 import com.howtodo.data.db.AppDatabase
 import com.howtodo.data.db.FtsStore
 import com.howtodo.data.db.ProjectEntity
 import com.howtodo.data.db.ProjectStatus
 import com.howtodo.data.db.ProposalViewDao
 import com.howtodo.data.db.TaskViewDao
+import com.howtodo.notify.AlarmScheduler
 import kotlinx.coroutines.flow.Flow
 import java.util.UUID
 
-class ProjectRepo(private val db: AppDatabase) {
+class ProjectRepo(
+    private val db: AppDatabase,
+    private val storage: com.howtodo.util.Storage,
+    private val alarmScheduler: AlarmScheduler
+) {
 
     private val dao get() = db.projectDao()
 
@@ -55,9 +61,37 @@ class ProjectRepo(private val db: AppDatabase) {
 
     suspend fun setBaseline(id: String, batchId: String?) = dao.setBaseline(id, batchId)
 
+    /**
+     * 删除工作及其全部从属数据（单事务，中途失败整体回滚）：
+     * 提醒、任务证据、变更日志、提案条目与提案、批次、聊天消息与会话、
+     * 工作级知识、任务、材料（倒排索引→块→原件文件→记录）。
+     * 全局知识（scope=GLOBAL）跨工作复用，保留。
+     */
     suspend fun delete(id: String) {
-        db.taskDao().deleteByProject(id)
-        dao.delete(id)
+        // 事务外先抓挂着闹钟的提醒行：事务里行会被删掉，事后只能靠 requestCode 撤闹钟
+        val pending = db.reminderDao().scheduled().filter { it.projectId == id }
+        db.withTransaction {
+            db.reminderDao().deleteByProject(id)
+            db.taskEvidenceDao().deleteByProject(id)
+            db.changeLogDao().deleteByProject(id)
+            db.proposalItemDao().deleteByProject(id)
+            db.proposalDao().deleteByProject(id)
+            db.batchDao().deleteByProject(id)
+            db.messageDao().deleteByProject(id)
+            db.conversationDao().deleteByProject(id)
+            db.knowledgeDao().deleteByProject(id)
+            db.taskDao().deleteByProject(id)
+            db.sourceDao().listByProject(id).forEach { s ->
+                // 倒排索引按 chunk.id 建行，必须趁 chunk 还在时先删
+                FtsStore.deleteBySource(db.openHelper.writableDatabase, s.id)
+                db.chunkDao().deleteBySource(s.id)
+                storage.deleteMaterial(s.id)
+                db.sourceDao().delete(s.id)
+            }
+            dao.delete(id)
+        }
+        // 行已删，按 requestCode 撤 AlarmManager 里遗留的闹钟，避免到点空响
+        pending.forEach { alarmScheduler.cancelCode(it.requestCode, it.id, it.taskId) }
     }
 }
 

@@ -1,7 +1,6 @@
 package com.howtodo.data.repo
 
 import com.howtodo.ai.LlmClient
-import com.howtodo.data.db.AiRole
 import com.howtodo.data.db.AppDatabase
 import com.howtodo.data.db.ProviderEntity
 import com.howtodo.data.db.ProviderModelEntity
@@ -140,22 +139,6 @@ class ProviderRepo(private val db: AppDatabase) {
                 contextBudget = contextBudget
             )
         )
-    }
-
-    /** 首次使用时把同一个模型铺到所有角色，用户可再单独调整 */
-    suspend fun seedBindingsFrom(providerId: String, modelId: String, contextBudget: Int = 32000) {
-        AiRole.ALL.forEach { role ->
-            if (roleDao.byRole(role)?.providerId.isNullOrBlank()) {
-                roleDao.upsert(
-                    RoleBindingEntity(
-                        role = role,
-                        providerId = providerId,
-                        modelId = modelId,
-                        contextBudget = contextBudget
-                    )
-                )
-            }
-        }
     }
 
     private fun guessVision(modelId: String): Boolean {

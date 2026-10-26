@@ -125,20 +125,6 @@ class BootReceiver : BroadcastReceiver() {
 }
 
 /** 每日早报：用 WorkManager 保证跨重启仍生效 */
-class DigestReceiver : BroadcastReceiver() {
-    override fun onReceive(context: Context, intent: Intent) {
-        val app = context.applicationContext as? App ?: return
-        val pending = goAsync()
-        app.container.appScope.launch {
-            try {
-                DailyDigestWorker.showNow(app)
-            } finally {
-                pending.finish()
-            }
-        }
-    }
-}
-
 internal fun nextDigestMillis(hour: Int, minute: Int): Long {
     val zone = ZoneId.systemDefault()
     val now = java.time.LocalDateTime.now(zone)

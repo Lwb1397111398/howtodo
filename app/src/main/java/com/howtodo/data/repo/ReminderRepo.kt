@@ -50,14 +50,23 @@ class ReminderRepo(private val db: AppDatabase) {
     }
 
     /** 为单个任务重建提醒（先清后建，幂等） */
-    suspend fun rescheduleTask(task: TaskEntity): List<ReminderEntity> {
+    suspend fun rescheduleTask(task: TaskEntity): List<ReminderEntity> =
+        rebuildReminders(
+            task,
+            boolSetting(KEY_D3_ENABLED, true),
+            boolSetting(KEY_D1_ENABLED, true),
+            boolSetting(KEY_D0_ENABLED, true)
+        )
+
+    private suspend fun rebuildReminders(
+        task: TaskEntity,
+        d3: Boolean,
+        d1: Boolean,
+        d0: Boolean
+    ): List<ReminderEntity> {
         dao.cancelByTask(task.id)
         if (task.status != TaskStatus.TODO) return emptyList()
         val due = task.dueAt ?: return emptyList()
-
-        val d3 = boolSetting(KEY_D3_ENABLED, true)
-        val d1 = boolSetting(KEY_D1_ENABLED, true)
-        val d0 = boolSetting(KEY_D0_ENABLED, true)
 
         val now = System.currentTimeMillis()
         val dueDate = Instant.ofEpochMilli(due).atZone(zone()).toLocalDate()
@@ -92,12 +101,12 @@ class ReminderRepo(private val db: AppDatabase) {
         return out
     }
 
+    /** 全量重排：设置只读一次，别每个任务查三遍（几十个任务就是上百次查询） */
     suspend fun rescheduleAll(): Int {
-        var n = 0
-        db.taskDao().allOpen().forEach { t ->
-            n += rescheduleTask(t).size
-        }
-        return n
+        val d3 = boolSetting(KEY_D3_ENABLED, true)
+        val d1 = boolSetting(KEY_D1_ENABLED, true)
+        val d0 = boolSetting(KEY_D0_ENABLED, true)
+        return db.taskDao().allOpen().sumOf { rebuildReminders(it, d3, d1, d0).size }
     }
 
     suspend fun digestTime(): Pair<Int, Int> {

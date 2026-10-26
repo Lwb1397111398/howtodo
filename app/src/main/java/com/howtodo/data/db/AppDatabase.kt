@@ -28,7 +28,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ImportQueueEntity::class,
         AppSettingEntity::class
     ],
-    version = 2,
+    version = 3,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -75,9 +75,20 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v2→v3：drop 半成品 entity_fts 虚拟表。它是知识检索 FTS5 方案的遗留，
+         * 从未写入也从未查询（知识检索一直走 LIKE），留着只会在每次打开数据库时多建一张空表。
+         * chunk_fts 保留：问答与提案引用仍靠它做 BM25 检索。
+         */
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("DROP TABLE IF EXISTS entity_fts")
+            }
+        }
+
         fun build(context: Context): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, "howtodo.db")
-                .addMigrations(MIGRATION_1_2)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
                 .addCallback(FtsCallback())
                 .build()
     }

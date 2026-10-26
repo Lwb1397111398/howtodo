@@ -84,6 +84,18 @@ fun ProposalScreen(
     var message by remember { mutableStateOf<String?>(null) }
     var appliedTitles by remember { mutableStateOf(false) }
 
+    // 引文 chunkId 随 items 一起解析；items 是 Flow 异步到达的，不能在 LaunchedEffect(proposalId)
+    // 里直接读 items——那时大概率还是空列表，引文「查看原文」会全部点不动
+    val evidenceChunkIds = remember(items) {
+        items.flatMap { item ->
+            runCatching {
+                JsonParser.parseString(item.evidenceJson ?: "[]").asJsonArray
+            }.getOrNull()?.mapNotNull {
+                runCatching { it.asJsonObject.get("chunkId")?.asLong }.getOrNull()
+            }.orEmpty()
+        }.distinct()
+    }
+
     LaunchedEffect(proposalId) {
         val p = withContext(Dispatchers.IO) { c.proposalRepo.byId(proposalId) }
         proposal = p
@@ -91,23 +103,16 @@ fun ProposalScreen(
             projectTitle = withContext(Dispatchers.IO) {
                 c.projectRepo.byId(p.projectId)?.title ?: ""
             }
-            // 解析引文：chunkId -> (来源id, 来源名, 页)
-            val ids = items.mapNotNull { item ->
-                runCatching {
-                    JsonParser.parseString(item.evidenceJson ?: "[]").asJsonArray
-                }.getOrNull()?.mapNotNull {
-                    runCatching { it.asJsonObject.get("chunkId")?.asLong }.getOrNull()
-                }
-            }.flatten().distinct()
-            if (ids.isNotEmpty()) {
-                val map = withContext(Dispatchers.IO) {
-                    val chunks = c.db.chunkDao().byIds(ids)
-                    chunks.associate { ch ->
-                        val src = c.sourceRepo.byId(ch.sourceId)
-                        ch.id to Triple(ch.sourceId, src?.displayName ?: "材料", ch.pageNo ?: 0)
-                    }
-                }
-                chunkInfo = map
+        }
+    }
+
+    // chunkId 列表不变就不重查（决策切换会让 items 重发，但 id 列表相等，LaunchedEffect 不会重启）
+    LaunchedEffect(evidenceChunkIds) {
+        if (evidenceChunkIds.isEmpty()) return@LaunchedEffect
+        chunkInfo = withContext(Dispatchers.IO) {
+            c.db.chunkDao().byIds(evidenceChunkIds).associate { ch ->
+                val src = c.sourceRepo.byId(ch.sourceId)
+                ch.id to Triple(ch.sourceId, src?.displayName ?: "材料", ch.pageNo ?: 0)
             }
         }
     }

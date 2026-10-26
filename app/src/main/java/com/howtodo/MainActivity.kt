@@ -9,7 +9,9 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.howtodo.ui.nav.AppNav
 import com.howtodo.ui.theme.HowTodoTheme
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
 
@@ -43,7 +45,10 @@ class MainActivity : ComponentActivity() {
         val container = (application as App).container
         container.appScope.launch {
             val task = runCatching { container.db.taskDao().byId(taskId) }.getOrNull() ?: return@launch
-            startProjectId = task.projectId
+            // Compose 状态只在主线程写：appScope 是 IO 调度器，直接赋值属于越线程写 UI
+            withContext(Dispatchers.Main) {
+                startProjectId = task.projectId
+            }
         }
     }
 

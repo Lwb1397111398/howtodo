@@ -2,7 +2,6 @@ package com.howtodo.ingest
 
 import android.content.Context
 import android.net.Uri
-import androidx.core.content.FileProvider
 import com.howtodo.data.db.AppDatabase
 import com.howtodo.data.db.ImportQueueEntity
 import com.howtodo.data.db.SourceEntity
@@ -175,10 +174,6 @@ class ImportManager(
             }
         }
     }
-
-    /** 供系统"用其他应用打开"时把文件暴露出去 */
-    fun uriForSource(sourceId: String, authority: String): Uri =
-        FileProvider.getUriForFile(context, authority, storage.materialFile(sourceId))
 
     fun newSourceId(): String = UUID.randomUUID().toString().replace("-", "")
 }

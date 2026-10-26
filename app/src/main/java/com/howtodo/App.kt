@@ -21,6 +21,10 @@ class App : Application() {
         container.appScope.launch {
             runCatching { FtsStore.ensure(container.db.openHelper.writableDatabase) }
             runCatching { container.reminderRepo.purgeOld() }
+            // 导入队列里已处理完的记录 7 天后清掉，表只进不出会一直涨
+            runCatching {
+                container.db.importQueueDao().purgeDone(System.currentTimeMillis() - 7L * 24 * 3600_000)
+            }
             // 上次分析没跑完（进程被杀）的批次置失败，让用户能重新分析
             runCatching { container.extraction.failStaleBatches() }
             // 开机/冷启动后重建闹钟：Android 重启会清掉所有 AlarmManager 闹钟

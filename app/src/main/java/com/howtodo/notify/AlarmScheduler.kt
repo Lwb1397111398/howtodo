@@ -69,6 +69,29 @@ class AlarmScheduler(
         }
     }
 
+    /**
+     * 撤掉某个已不存在于数据库的提醒的闹钟（删除工作/任务时收尾用）。
+     * 用 FLAG_NO_CREATE 只在闹钟还挂着时取消；filterEquals 不比对 extras，
+     * 所以 intent 只需要 action 与目标一致。
+     */
+    fun cancelCode(requestCode: Int, reminderId: Long, taskId: String?) {
+        try {
+            val intent = Intent(context, ReminderReceiver::class.java).apply {
+                action = ReminderReceiver.ACTION_ALARM
+                putExtra("reminderId", reminderId)
+                putExtra("taskId", taskId)
+            }
+            val pi = PendingIntent.getBroadcast(
+                context,
+                requestCode,
+                intent,
+                PendingIntent.FLAG_NO_CREATE or PendingIntent.FLAG_IMMUTABLE
+            )
+            if (pi != null) alarmManager()?.cancel(pi)
+        } catch (_: Throwable) {
+        }
+    }
+
     /** 按数据库重建所有闹钟 */
     suspend fun rescheduleAll(): Int {
         val list = reminderRepo.scheduled()

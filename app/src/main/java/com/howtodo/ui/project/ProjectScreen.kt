@@ -125,6 +125,7 @@ fun ProjectScreen(
     var showAddTask by remember { mutableStateOf(false) }
     var showRename by remember { mutableStateOf(false) }
     var showArchive by remember { mutableStateOf(false) }
+    var showDelete by remember { mutableStateOf(false) }
     var editing by remember { mutableStateOf<TaskWithProject?>(null) }
 
     var busy by remember { mutableStateOf<String?>(null) }
@@ -240,6 +241,12 @@ fun ProjectScreen(
                         DropdownMenuItem(text = { Text("归档工作") }, onClick = {
                             showMenu = false; showArchive = true
                         })
+                        DropdownMenuItem(
+                            text = { Text("删除工作", color = MaterialTheme.colorScheme.error) },
+                            onClick = {
+                                showMenu = false; showDelete = true
+                            }
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -457,6 +464,31 @@ fun ProjectScreen(
                     c.projectRepo.archive(projectId)
                     showArchive = false
                     onBack()
+                }
+            }
+        )
+    }
+
+    if (showDelete) {
+        ConfirmDialog(
+            title = "彻底删除这项工作？",
+            message = "任务、材料、聊天记录、变更历史和提醒会全部删除，删除后不能恢复。" +
+                "如果只是想先收起来，用「归档」更稳妥。",
+            confirmText = "彻底删除",
+            danger = true,
+            onDismiss = { showDelete = false },
+            onConfirm = {
+                showDelete = false
+                scope.launch {
+                    busy = "正在删除…"
+                    val r = runCatching {
+                        withContext(Dispatchers.IO) { c.projectRepo.delete(projectId) }
+                    }
+                    busy = null
+                    r.fold(
+                        onSuccess = { onBack() },
+                        onFailure = { e -> error = e.message ?: "删除失败" }
+                    )
                 }
             }
         )

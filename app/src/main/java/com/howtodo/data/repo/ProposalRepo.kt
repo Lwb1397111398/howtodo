@@ -360,8 +360,6 @@ class ProposalRepo(private val db: AppDatabase) {
         Result.success(n)
     }
 
-    suspend fun recentChanges(projectId: String, limit: Int = 100) = logDao.recent(projectId, limit)
-
     private fun safeObj(json: String?): JsonObject = try {
         if (json.isNullOrBlank()) JsonObject() else JsonParser.parseString(json).asJsonObject
     } catch (_: Throwable) {

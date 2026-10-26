@@ -22,15 +22,12 @@ object FtsStore {
 
     private const val DDL_CHUNK_FTS5 =
         "CREATE VIRTUAL TABLE IF NOT EXISTS chunk_fts USING fts5(bi)"
-    private const val DDL_ENTITY_FTS5 =
-        "CREATE VIRTUAL TABLE IF NOT EXISTS entity_fts USING fts5(bi)"
 
     /** 幂等：每次数据库打开都调用，失败则降级 */
     fun ensure(db: SupportSQLiteDatabase) {
         if (mode == Mode.FTS5) return
         try {
             db.execSQL(DDL_CHUNK_FTS5)
-            db.execSQL(DDL_ENTITY_FTS5)
             mode = Mode.FTS5
         } catch (_: Throwable) {
             mode = Mode.LIKE
@@ -41,7 +38,6 @@ object FtsStore {
         if (mode == Mode.FTS5) return
         try {
             db.execSQL(DDL_CHUNK_FTS5)
-            db.execSQL(DDL_ENTITY_FTS5)
             mode = Mode.FTS5
         } catch (_: Throwable) {
             mode = Mode.LIKE
@@ -91,14 +87,6 @@ object FtsStore {
             return emptyList()
         }
         return out
-    }
-
-    fun indexEntity(db: SupportSQLiteDatabase, rowid: Long, bigramText: String) {
-        if (mode != Mode.FTS5) return
-        try {
-            db.execSQL("INSERT INTO entity_fts(rowid, bi) VALUES (?, ?)", arrayOf(rowid, bigramText))
-        } catch (_: Throwable) {
-        }
     }
 }
 

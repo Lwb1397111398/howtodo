@@ -101,6 +101,8 @@ fun ChatScreen(
         if (q.isEmpty() || thinking) return
         input = ""
         thinking = true
+        // 此刻的列表长度才是「是不是第一条」；等回答落库后再读 messages 已经刷新，会误判
+        val isFirst = messages.size <= 1
         scope.launch {
             withContext(Dispatchers.IO) {
                 c.chatRepo.append(cid, "user", q)
@@ -126,7 +128,7 @@ fun ChatScreen(
                     cid, "assistant", answer.text, answer.citationsJson, answer.model,
                     answer.promptTokens, answer.completionTokens
                 )
-                if (messages.size <= 1) {
+                if (isFirst) {
                     c.chatRepo.rename(cid, q.take(30))
                 }
             }

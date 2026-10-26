@@ -161,6 +161,10 @@ interface BatchDao {
 
     @Query("UPDATE batch SET status = :status, error = :error, finishedAt = :at WHERE id = :id")
     suspend fun setStatus(id: String, status: String, error: String? = null, at: Long? = System.currentTimeMillis())
+
+    /** 删除工作级联 */
+    @Query("DELETE FROM batch WHERE projectId = :projectId")
+    suspend fun deleteByProject(projectId: String)
 }
 
 @Dao
@@ -188,6 +192,10 @@ interface ProposalDao {
 
     @Query("UPDATE proposal SET state = :state, appliedAt = :at WHERE id = :id")
     suspend fun setState(id: String, state: String, at: Long? = System.currentTimeMillis())
+
+    /** 删除工作级联 */
+    @Query("DELETE FROM proposal WHERE projectId = :projectId")
+    suspend fun deleteByProject(projectId: String)
 }
 
 @Dao
@@ -221,6 +229,10 @@ interface ProposalItemDao {
 
     @Query("SELECT COUNT(*) FROM proposal_item WHERE proposalId = :proposalId AND decision = 'ACCEPT'")
     suspend fun acceptedCount(proposalId: String): Int
+
+    /** 删除工作级联：该工作所有提案下的条目 */
+    @Query("DELETE FROM proposal_item WHERE proposalId IN (SELECT id FROM proposal WHERE projectId = :projectId)")
+    suspend fun deleteByProject(projectId: String)
 }
 
 @Dao
@@ -298,6 +310,10 @@ interface TaskEvidenceDao {
 
     @Query("DELETE FROM task_evidence WHERE taskId = :taskId")
     suspend fun deleteByTask(taskId: String)
+
+    /** 删除工作级联：该工作所有任务下的证据行 */
+    @Query("DELETE FROM task_evidence WHERE taskId IN (SELECT id FROM task WHERE projectId = :projectId)")
+    suspend fun deleteByProject(projectId: String)
 }
 
 @Dao
@@ -305,8 +321,9 @@ interface ChangeLogDao {
     @Insert
     suspend fun insert(c: ChangeLogEntity): Long
 
-    @Query("SELECT * FROM change_log WHERE projectId = :projectId ORDER BY id DESC LIMIT :limit")
-    suspend fun recent(projectId: String, limit: Int = 100): List<ChangeLogEntity>
+    /** 删除工作级联：该工作的全部变更日志（撤销仍走 byProposal，不受影响） */
+    @Query("DELETE FROM change_log WHERE projectId = :projectId")
+    suspend fun deleteByProject(projectId: String)
 
     @Query("SELECT * FROM change_log WHERE proposalId = :proposalId ORDER BY id DESC")
     suspend fun byProposal(proposalId: String): List<ChangeLogEntity>
@@ -349,6 +366,10 @@ interface KnowledgeDao {
 
     @Query("UPDATE knowledge_entity SET verified = 1, status = 'ACTIVE', updatedAt = :now WHERE id = :id")
     suspend fun verify(id: String, now: Long = System.currentTimeMillis())
+
+    /** 删除工作级联：只删工作级知识，全局知识（scope=GLOBAL）跨工作复用，保留 */
+    @Query("DELETE FROM knowledge_entity WHERE projectId = :projectId AND scope != 'GLOBAL'")
+    suspend fun deleteByProject(projectId: String)
 }
 
 @Dao
@@ -373,6 +394,10 @@ interface ConversationDao {
 
     @Query("DELETE FROM conversation WHERE id = :id")
     suspend fun delete(id: String)
+
+    /** 删除工作级联：该工作下的全部会话（projectId 为 NULL 的全局会话不受影响） */
+    @Query("DELETE FROM conversation WHERE projectId = :projectId")
+    suspend fun deleteByProject(projectId: String)
 }
 
 @Dao
@@ -388,6 +413,10 @@ interface MessageDao {
 
     @Query("DELETE FROM message WHERE conversationId = :conversationId")
     suspend fun deleteByConversation(conversationId: String)
+
+    /** 删除工作级联：该工作所有会话下的消息 */
+    @Query("DELETE FROM message WHERE conversationId IN (SELECT id FROM conversation WHERE projectId = :projectId)")
+    suspend fun deleteByProject(projectId: String)
 }
 
 @Dao
@@ -404,9 +433,6 @@ interface ReminderDao {
     @Query("SELECT * FROM reminder WHERE taskId = :taskId AND state = 'SCHEDULED'")
     suspend fun byTask(taskId: String): List<ReminderEntity>
 
-    @Query("SELECT * FROM reminder WHERE dedupeKey = :key LIMIT 1")
-    suspend fun byDedupe(key: String): ReminderEntity?
-
     @Query("UPDATE reminder SET requestCode = :code WHERE id = :id")
     suspend fun updateRequestCode(id: Long, code: Int)
 
@@ -421,6 +447,10 @@ interface ReminderDao {
 
     @Query("DELETE FROM reminder WHERE state != 'SCHEDULED' AND triggerAt < :before")
     suspend fun purgeOld(before: Long)
+
+    /** 删除工作级联：该工作名下所有提醒（含已触发的历史行） */
+    @Query("DELETE FROM reminder WHERE projectId = :projectId")
+    suspend fun deleteByProject(projectId: String)
 }
 
 @Dao
