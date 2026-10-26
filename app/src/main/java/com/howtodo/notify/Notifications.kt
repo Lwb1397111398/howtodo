@@ -25,19 +25,19 @@ object Notifications {
         val nm = context.getSystemService(NotificationManager::class.java) ?: return
 
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_DEADLINE, "任务提醒", NotificationManager.IMPORTANCE_HIGH).apply {
-                description = "截止前的提醒"
+            NotificationChannel(CHANNEL_DEADLINE, context.getString(R.string.channel_deadline_name), NotificationManager.IMPORTANCE_HIGH).apply {
+                description = context.getString(R.string.channel_deadline_desc)
                 enableVibration(true)
             }
         )
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_DIGEST, "每日早报", NotificationManager.IMPORTANCE_DEFAULT).apply {
-                description = "每天早上汇总今天要做的事"
+            NotificationChannel(CHANNEL_DIGEST, context.getString(R.string.channel_digest_name), NotificationManager.IMPORTANCE_DEFAULT).apply {
+                description = context.getString(R.string.channel_digest_desc)
             }
         )
         nm.createNotificationChannel(
-            NotificationChannel(CHANNEL_PARSE, "解析进度", NotificationManager.IMPORTANCE_LOW).apply {
-                description = "材料识别完成的提示"
+            NotificationChannel(CHANNEL_PARSE, context.getString(R.string.channel_parse_name), NotificationManager.IMPORTANCE_LOW).apply {
+                description = context.getString(R.string.channel_parse_desc)
             }
         )
     }
@@ -76,9 +76,11 @@ object Notifications {
         reminderId: Long
     ) {
         val title = when (kind) {
-            ReminderKind.D3 -> "还有 3 天：${task.title}"
-            ReminderKind.D1 -> "明天截止：${task.title}"
-            ReminderKind.D0 -> if (isOverdue(task)) "已逾期：${task.title}" else "今天截止：${task.title}"
+            ReminderKind.D3 -> context.getString(R.string.notif_reminder_d3, task.title)
+            ReminderKind.D1 -> context.getString(R.string.notif_reminder_d1, task.title)
+            ReminderKind.D0 ->
+                if (isOverdue(task)) context.getString(R.string.notif_reminder_overdue, task.title)
+                else context.getString(R.string.notif_reminder_today, task.title)
             else -> task.title
         }
         val body = buildString {
@@ -96,8 +98,8 @@ object Notifications {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .setContentIntent(openApp(context, task.id))
-            .addAction(0, "标记完成", action(context, ReminderReceiver.ACTION_DONE, task.id, reminderId, actionCode(task.id, 0)))
-            .addAction(0, "1 小时后再提醒", action(context, ReminderReceiver.ACTION_SNOOZE, task.id, reminderId, actionCode(task.id, 1)))
+            .addAction(0, context.getString(R.string.notif_action_done), action(context, ReminderReceiver.ACTION_DONE, task.id, reminderId, actionCode(task.id, 0)))
+            .addAction(0, context.getString(R.string.notif_action_snooze), action(context, ReminderReceiver.ACTION_SNOOZE, task.id, reminderId, actionCode(task.id, 1)))
 
         notify(context, notificationId(task.id, kind), builder.build())
     }
@@ -143,8 +145,8 @@ object Notifications {
     fun showParseDone(context: Context, sourceName: String, count: Int) {
         val builder = NotificationCompat.Builder(context, CHANNEL_PARSE)
             .setSmallIcon(R.drawable.ic_stat_todo)
-            .setContentTitle("材料已解析")
-            .setContentText("《$sourceName》已识别完成，可开始分析")
+            .setContentTitle(context.getString(R.string.notif_parse_done_title))
+            .setContentText(context.getString(R.string.notif_parse_done_body, sourceName))
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .setAutoCancel(true)
             .setContentIntent(openApp(context))

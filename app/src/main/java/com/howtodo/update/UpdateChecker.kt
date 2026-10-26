@@ -1,9 +1,11 @@
 package com.howtodo.update
 
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
+import java.util.concurrent.TimeUnit
 
 /**
  * 检查更新：直连 → 透传镜像，逐条尝试。
@@ -11,6 +13,8 @@ import java.net.URL
  * 国内运营商对 api.github.com 的 DNS 污染是域名维度的：查询走通的通道，
  * 下载大概率也走得通，所以查询成功时把通道前缀记进 UpdateInfo.sourcePrefix，
  * 下载候选把该前缀排在第一位复用。
+ *
+ * 网络栈与主程序一致走 OkHttp（连接池 / 重定向 / TLS 行为统一），不再用 HttpURLConnection。
  */
 class UpdateChecker(private val repoOwner: String, private val repoName: String) {
 
@@ -20,6 +24,15 @@ class UpdateChecker(private val repoOwner: String, private val repoName: String)
         /** 仅透传下载的镜像，只进下载候选，不用于查询 */
         val DOWNLOAD_ONLY_PREFIXES = listOf("https://gh-proxy.org/", "https://ghfast.top/", "https://ghproxy.net/")
         private const val UA = "HowTodo-Updater"
+
+        /** 更新链路共用：查询 8s 超时；下载时用 newBuilder 把读超时放宽到 30s */
+        internal val http: OkHttpClient by lazy {
+            OkHttpClient.Builder()
+                .connectTimeout(8, TimeUnit.SECONDS)
+                .readTimeout(8, TimeUnit.SECONDS)
+                .followRedirects(true)
+                .build()
+        }
     }
 
     sealed class Result {
@@ -37,34 +50,32 @@ class UpdateChecker(private val repoOwner: String, private val repoName: String)
         var lastError = ""
         for (prefix in QUERY_PREFIXES) {
             val url = prefix + "https://api.github.com/repos/$repoOwner/$repoName/releases/latest"
+            val req = Request.Builder()
+                .url(url)
+                // GitHub API 强制要求 User-Agent，缺了直接 403
+                .header("User-Agent", UA)
+                .header("Accept", "application/vnd.github+json")
+                .build()
             try {
-                val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 8000
-                    readTimeout = 8000
-                    instanceFollowRedirects = true
-                    // GitHub API 强制要求 User-Agent，缺了直接 403
-                    setRequestProperty("User-Agent", UA)
-                    setRequestProperty("Accept", "application/vnd.github+json")
-                }
-                when (conn.responseCode) {
-                    200 -> {
-                        val body = conn.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
-                        val info = UpdateParser.parseRelease(body)
-                        if (info == null) {
+                http.newCall(req).execute().use { resp ->
+                    when (resp.code) {
+                        200 -> {
+                            val info = UpdateParser.parseRelease(resp.body?.string().orEmpty())
+                            if (info != null) {
+                                return if (info.versionCode > localVersionCode) {
+                                    // 记住查询成功的通道，下载优先复用它
+                                    Result.Available(info.copy(sourcePrefix = prefix))
+                                } else {
+                                    Result.NoUpdate
+                                }
+                            }
                             // 直连被劫持/返回坏数据时换下一通道，多源轮换在这里才有意义
                             lastError = "云端发布的内容不完整"
-                            continue
                         }
-                        return if (info.versionCode > localVersionCode) {
-                            // 记住查询成功的通道，下载优先复用它
-                            Result.Available(info.copy(sourcePrefix = prefix))
-                        } else {
-                            Result.NoUpdate
-                        }
+                        403 -> lastError = "访问被限流（HTTP 403）"
+                        404 -> saw404 = true
+                        else -> lastError = "HTTP " + resp.code
                     }
-                    403 -> { lastError = "访问被限流（HTTP 403）"; continue }
-                    404 -> { saw404 = true; continue }
-                    else -> { lastError = "HTTP " + conn.responseCode; continue }
                 }
             } catch (e: IOException) {
                 lastError = "直连与镜像都失败（" + (e.message ?: "网络异常") + "）"
@@ -103,51 +114,49 @@ object UpdateDownloader {
             return Result.Ok(target)
         }
         val part = File(destDir, target.name + ".part")
+        val http = UpdateChecker.http.newBuilder()
+            .readTimeout(30, TimeUnit.SECONDS)
+            .build()
         var lastError = ""
         for (prefix in candidates(info.sourcePrefix)) {
             val url = prefix + info.apkUrl
+            val req = Request.Builder().url(url).header("User-Agent", "HowTodo-Updater").build()
             try {
-                val conn = (URL(url).openConnection() as HttpURLConnection).apply {
-                    connectTimeout = 10000
-                    readTimeout = 30000
-                    instanceFollowRedirects = true
-                    setRequestProperty("User-Agent", "HowTodo-Updater")
-                }
-                val code = conn.responseCode
-                if (code !in 200..299) {
-                    lastError = "HTTP " + code
-                    continue
-                }
-                val expected = conn.contentLengthLong.takeIf { it > 0 } ?: info.apkSize
-                conn.inputStream.use { ins ->
-                    java.io.FileOutputStream(part).use { outs ->
-                        val buf = ByteArray(64 * 1024)
-                        var received = 0L
-                        while (true) {
-                            val n = ins.read(buf)
-                            if (n <= 0) break
-                            outs.write(buf, 0, n)
-                            received += n
-                            if (expected > 0) {
-                                onProgress(((received * 100) / expected).toInt().coerceIn(0, 100))
+                http.newCall(req).execute().use { resp ->
+                    if (!resp.isSuccessful) {
+                        lastError = "HTTP " + resp.code
+                        return@use
+                    }
+                    val expected = resp.body?.contentLength()?.takeIf { it > 0 } ?: info.apkSize
+                    resp.body?.byteStream()?.use { ins ->
+                        FileOutputStream(part).use { outs ->
+                            val buf = ByteArray(64 * 1024)
+                            var received = 0L
+                            while (true) {
+                                val n = ins.read(buf)
+                                if (n <= 0) break
+                                outs.write(buf, 0, n)
+                                received += n
+                                if (expected > 0) {
+                                    onProgress(((received * 100) / expected).toInt().coerceIn(0, 100))
+                                }
                             }
                         }
                     }
+                    if (expected > 0 && part.length() != expected) {
+                        // 校验字节数与 Content-Length 一致，不留半截包
+                        lastError = "下载不完整（" + part.length() + "/" + expected + " 字节）"
+                        return@use
+                    }
+                    if (!part.renameTo(target)) {
+                        lastError = "写入缓存失败"
+                        return@use
+                    }
+                    onProgress(100)
+                    return Result.Ok(target)
                 }
-                if (expected > 0 && part.length() != expected) {
-                    // 校验字节数与 Content-Length 一致，不留半截包
-                    lastError = "下载不完整（" + part.length() + "/" + expected + " 字节）"
-                    continue
-                }
-                if (!part.renameTo(target)) {
-                    lastError = "写入缓存失败"
-                    continue
-                }
-                onProgress(100)
-                return Result.Ok(target)
             } catch (e: Throwable) {
                 lastError = e.message ?: e.javaClass.simpleName
-                continue
             }
         }
         part.delete()

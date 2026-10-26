@@ -22,7 +22,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -71,23 +74,28 @@ fun ChatScreen(
     var input by remember { mutableStateOf("") }
     var thinking by remember { mutableStateOf(false) }
     var crossProject by remember { mutableStateOf(false) }
+    var showHistory by remember { mutableStateOf(false) }
 
     LaunchedEffect(projectId) {
         if (projectId != null) {
             projectTitle = withContext(Dispatchers.IO) { c.projectRepo.byId(projectId)?.title }
         }
-        // v1：每次进入开一段新会话，历史仍保存在数据库里
+        // 续聊该范围最近的一段会话（历史不再每次进页面就被丢掉）；一段都没有才新建
         conversationId = withContext(Dispatchers.IO) {
-            c.chatRepo.createConversation(
-                projectId,
-                projectTitle?.let { "关于「$it」的提问" } ?: "全局提问"
-            ).id
+            c.chatRepo.latestConversation(projectId)?.id
+                ?: c.chatRepo.createConversation(
+                    projectId,
+                    projectTitle?.let { "关于「$it」的提问" } ?: "全局提问"
+                ).id
         }
     }
 
     val messages by (conversationId?.let { id ->
         c.chatRepo.observeMessages(id)
     } ?: kotlinx.coroutines.flow.flowOf(emptyList<MessageEntity>()))
+        .collectAsState(initial = emptyList())
+
+    val conversations by c.chatRepo.observeConversations(projectId)
         .collectAsState(initial = emptyList())
 
     val listState = rememberLazyListState()
@@ -136,6 +144,39 @@ fun ChatScreen(
         }
     }
 
+    fun openConversation(id: String) {
+        showHistory = false
+        conversationId = id
+    }
+
+    fun newConversation() {
+        showHistory = false
+        scope.launch {
+            conversationId = withContext(Dispatchers.IO) {
+                c.chatRepo.createConversation(
+                    projectId,
+                    projectTitle?.let { "关于「$it」的提问" } ?: "全局提问"
+                ).id
+            }
+        }
+    }
+
+    fun deleteConversation(cv: com.howtodo.data.db.ConversationEntity) {
+        scope.launch {
+            withContext(Dispatchers.IO) { c.chatRepo.deleteConversation(cv.id) }
+            if (cv.id == conversationId) {
+                // 删的是正在聊的：切到剩下的最近一段，一段都没有就开新的
+                val next = withContext(Dispatchers.IO) { c.chatRepo.latestConversation(projectId) }
+                conversationId = next?.id ?: withContext(Dispatchers.IO) {
+                    c.chatRepo.createConversation(
+                        projectId,
+                        projectTitle?.let { "关于「$it」的提问" } ?: "全局提问"
+                    ).id
+                }
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -162,6 +203,9 @@ fun ChatScreen(
                             color = if (crossProject) MaterialTheme.colorScheme.primary
                             else MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                    IconButton(onClick = { showHistory = true }) {
+                        Icon(Icons.Outlined.History, contentDescription = "聊天历史")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -285,6 +329,17 @@ fun ChatScreen(
             }
         }
     }
+
+    if (showHistory) {
+        HistoryDialog(
+            conversations = conversations,
+            currentId = conversationId,
+            onOpen = ::openConversation,
+            onDelete = ::deleteConversation,
+            onNew = ::newConversation,
+            onDismiss = { showHistory = false }
+        )
+    }
 }
 
 @Composable
@@ -372,4 +427,65 @@ private fun parseCitations(json: String?): List<Cit> = try {
     }
 } catch (_: Throwable) {
     emptyList()
+}
+
+@Composable
+private fun HistoryDialog(
+    conversations: List<com.howtodo.data.db.ConversationEntity>,
+    currentId: String?,
+    onOpen: (String) -> Unit,
+    onDelete: (com.howtodo.data.db.ConversationEntity) -> Unit,
+    onNew: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("聊天历史") },
+        text = {
+            LazyColumn(modifier = Modifier.height(340.dp)) {
+                if (conversations.isEmpty()) {
+                    item {
+                        Text(
+                            "还没有历史会话",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                items(conversations, key = { it.id }) { cv ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpen(cv.id) }
+                            .padding(vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = cv.title + if (cv.id == currentId) "（当前）" else "",
+                                style = MaterialTheme.typography.bodyMedium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = com.howtodo.util.Format.dateTime(cv.updatedAt),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(onClick = { onDelete(cv) }, modifier = Modifier.size(30.dp)) {
+                            Icon(
+                                Icons.Outlined.Delete,
+                                contentDescription = "删除会话",
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onNew) { Text("新对话") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
+    )
 }

@@ -20,6 +20,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        maybeAskNotificationPermission()
         setContent {
             HowTodoTheme {
                 AppNav(
@@ -29,6 +30,25 @@ class MainActivity : ComponentActivity() {
             }
         }
         consumeIntent(intent)
+    }
+
+    /**
+     * 首启引导通知权限（Android 13+ 是运行时权限）：只问一次，拒绝不纠缠，
+     * 拒绝后由设置页与今日页的常驻提示承接（到点提醒弹不出来要说清楚）。
+     */
+    private fun maybeAskNotificationPermission() {
+        if (android.os.Build.VERSION.SDK_INT < 33) return
+        val prefs = getSharedPreferences("app_prefs", MODE_PRIVATE)
+        if (prefs.getBoolean("notif_perm_asked", false)) return
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(
+            this, android.Manifest.permission.POST_NOTIFICATIONS
+        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+        prefs.edit().putBoolean("notif_perm_asked", true).apply()
+        if (!granted) {
+            androidx.core.app.ActivityCompat.requestPermissions(
+                this, arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1
+            )
+        }
     }
 
     override fun onNewIntent(intent: Intent) {

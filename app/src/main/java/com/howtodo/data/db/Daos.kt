@@ -380,11 +380,16 @@ interface ConversationDao {
     @Query("SELECT * FROM conversation WHERE id = :id")
     suspend fun byId(id: String): ConversationEntity?
 
-    @Query("SELECT * FROM conversation WHERE projectId = :projectId ORDER BY updatedAt DESC")
+    /** IS 而不是 = ：全局会话 projectId 为 NULL，等号永远匹配不上 */
+    @Query("SELECT * FROM conversation WHERE projectId IS :projectId ORDER BY updatedAt DESC")
     fun observeByProject(projectId: String?): Flow<List<ConversationEntity>>
 
     @Query("SELECT * FROM conversation ORDER BY updatedAt DESC")
     fun observeAll(): Flow<List<ConversationEntity>>
+
+    /** 该范围（某工作或全局）最近的一段会话，聊天页续聊用 */
+    @Query("SELECT * FROM conversation WHERE projectId IS :projectId ORDER BY updatedAt DESC LIMIT 1")
+    suspend fun latest(projectId: String?): ConversationEntity?
 
     @Query("UPDATE conversation SET updatedAt = :now WHERE id = :id")
     suspend fun touch(id: String, now: Long = System.currentTimeMillis())

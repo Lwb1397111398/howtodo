@@ -9,6 +9,7 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
@@ -85,7 +86,11 @@ object Semantic {
     val overdue: Color @Composable get() = MaterialTheme.colorScheme.error
     val soon: Color @Composable get() = MaterialTheme.colorScheme.secondary
     val normal: Color @Composable get() = MaterialTheme.colorScheme.primary
-    val confirm: Color @Composable get() = Color(0xFF6A4C93)
+
+    /** 确认/需注意：浅色用深紫（浅底上够沉），深色翻成亮紫（深底上暗紫看不清） */
+    val confirm: Color @Composable get() =
+        if (MaterialTheme.colorScheme.background.luminance() < 0.5f) Color(0xFFCBB8F5)
+        else Color(0xFF6A4C93)
 }
 
 @Composable

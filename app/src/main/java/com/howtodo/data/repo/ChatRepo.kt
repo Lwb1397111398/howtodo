@@ -18,6 +18,9 @@ class ChatRepo(private val db: AppDatabase) {
 
     suspend fun conversation(id: String) = convDao.byId(id)
 
+    /** 该范围（某工作或全局）最近的一段会话；没有返回 null */
+    suspend fun latestConversation(projectId: String?) = convDao.latest(projectId)
+
     suspend fun createConversation(projectId: String?, title: String): ConversationEntity {
         val now = System.currentTimeMillis()
         val c = ConversationEntity(

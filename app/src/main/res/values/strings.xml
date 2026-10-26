@@ -1,4 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">工作如何做</string>
+
+    <!-- 通知渠道（系统设置里可见） -->
+    <string name="channel_deadline_name">任务提醒</string>
+    <string name="channel_deadline_desc">截止前的提醒</string>
+    <string name="channel_digest_name">每日早报</string>
+    <string name="channel_digest_desc">每天早上汇总今天要做的事</string>
+    <string name="channel_parse_name">解析进度</string>
+    <string name="channel_parse_desc">材料识别完成的提示</string>
+
+    <!-- 任务提醒通知 -->
+    <string name="notif_reminder_d3">还有 3 天：%1$s</string>
+    <string name="notif_reminder_d1">明天截止：%1$s</string>
+    <string name="notif_reminder_overdue">已逾期：%1$s</string>
+    <string name="notif_reminder_today">今天截止：%1$s</string>
+    <string name="notif_action_done">标记完成</string>
+    <string name="notif_action_snooze">1 小时后再提醒</string>
+
+    <!-- 解析完成通知 -->
+    <string name="notif_parse_done_title">材料已解析</string>
+    <string name="notif_parse_done_body">《%1$s》已识别完成，可开始分析</string>
 </resources>

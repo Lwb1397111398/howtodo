@@ -17,6 +17,15 @@ fun computeCommitCount(): Int = runCatching {
 
 val commitCount = computeCommitCount()
 val baseVersionOffset = 4
+
+// 防呆：提交数=0 多半是 CI checkout 没拉全历史（fetch-depth: 0），版本号会退回 offset，
+// 比 Release 上已发的小，装上后更新链路就断了。让构建日志里直接看得见。
+if (commitCount == 0) {
+    logger.warn(
+        "[howtodo] git 提交数 = 0，versionCode 回退为 $baseVersionOffset。" +
+            "若在 CI 构建，请给 actions/checkout 配置 fetch-depth: 0"
+    )
+}
     compileSdk = 36
 
     defaultConfig {

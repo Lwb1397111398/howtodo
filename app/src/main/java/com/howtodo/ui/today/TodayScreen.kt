@@ -75,8 +75,12 @@ fun TodayScreen(
 
     var showNew by remember { mutableStateOf(false) }
     var configured by remember { mutableStateOf<Boolean?>(null) }
+    var notifEnabled by remember { mutableStateOf(true) }
     LaunchedEffect(Unit) {
         configured = runCatching { c.router.isConfigured() }.getOrDefault(false)
+        notifEnabled = runCatching {
+            androidx.core.app.NotificationManagerCompat.from(ctx).areNotificationsEnabled()
+        }.getOrDefault(true)
     }
 
     val todayStart = Format.startOfDay(LocalDate.now())
@@ -149,6 +153,10 @@ fun TodayScreen(
 
             if (configured == false) {
                 item { SetupBanner(onOpenSettings) }
+            }
+
+            if (!notifEnabled) {
+                item { PermBanner(onOpenSettings) }
             }
 
             if (proposals.isNotEmpty()) {
@@ -360,6 +368,32 @@ private fun SetupBanner(onOpenSettings: () -> Unit) {
                 "填上 API 地址和 Key（支持任意 OpenAI 兼容接口），才能自动分析材料。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.85f)
+            )
+        }
+    }
+}
+
+@Composable
+private fun PermBanner(onOpenSettings: () -> Unit) {
+    Surface(
+        onClick = onOpenSettings,
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.errorContainer,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp)
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text(
+                "通知权限未开启",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onErrorContainer
+            )
+            Spacer(Modifier.height(3.dp))
+            Text(
+                "到点的截止提醒弹不出来。点这里去设置页打开；拒绝期间的提醒不会事后补发。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.85f)
             )
         }
     }
