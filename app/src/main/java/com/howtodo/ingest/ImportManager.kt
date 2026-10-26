@@ -58,7 +58,20 @@ class ImportManager(
 
         uris.forEach { uri ->
             val id = storage.newId()
-            val copied = storage.copyFromUri(uri, id)
+            val copied = try {
+                storage.copyFromUri(uri, id)
+            } catch (_: Storage.FileTooLargeException) {
+                failed++
+                db.importQueueDao().insert(
+                    ImportQueueEntity(
+                        uri = uri.toString(),
+                        state = "FAILED",
+                        error = "文件超过 ${Storage.MAX_IMPORT_BYTES / (1024 * 1024)}MB 导入上限"
+                    )
+                )
+                errors.add("有文件超过 ${Storage.MAX_IMPORT_BYTES / (1024 * 1024)}MB 导入上限，未导入")
+                return@forEach
+            }
             if (copied == null) {
                 failed++
                 db.importQueueDao().insert(

@@ -96,11 +96,18 @@ object Notifications {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .setContentIntent(openApp(context, task.id))
-            .addAction(0, "标记完成", action(context, ReminderReceiver.ACTION_DONE, task.id, reminderId, task.id.hashCode() and 0x0FFF or 0x1000))
-            .addAction(0, "1 小时后再提醒", action(context, ReminderReceiver.ACTION_SNOOZE, task.id, reminderId, task.id.hashCode() and 0x0FFF or 0x2000))
+            .addAction(0, "标记完成", action(context, ReminderReceiver.ACTION_DONE, task.id, reminderId, actionCode(task.id, 0)))
+            .addAction(0, "1 小时后再提醒", action(context, ReminderReceiver.ACTION_SNOOZE, task.id, reminderId, actionCode(task.id, 1)))
 
         notify(context, notificationId(task.id, kind), builder.build())
     }
+
+    /**
+     * 通知按钮的 PendingIntent 编号：taskId 全宽映射 + 动作序号。
+     * 旧实现压进 4096 个桶（and 0x0FFF），任务一多必然互相覆盖、点错任务。
+     */
+    private fun actionCode(taskId: String, action: Int): Int =
+        (taskId.hashCode() * 2 + action) and 0x7FFFFFFF
 
     fun showDigest(context: Context, overdue: Int, today: Int, soon: Int, topTitles: List<String>) {
         if (overdue == 0 && today == 0 && soon == 0) return

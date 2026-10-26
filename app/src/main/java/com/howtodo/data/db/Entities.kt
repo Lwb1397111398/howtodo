@@ -470,7 +470,8 @@ object ReminderState {
 
 @Entity(
     tableName = "reminder",
-    indices = [Index(value = ["state", "triggerAt"]), Index("taskId")]
+    // dedupeKey 唯一索引让插入的 OnConflictStrategy.IGNORE 真正生效，反复重排不产生重复提醒
+    indices = [Index(value = ["state", "triggerAt"]), Index("taskId"), Index(value = ["dedupeKey"], unique = true)]
 )
 data class ReminderEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -479,6 +480,7 @@ data class ReminderEntity(
     val kind: String,
     val triggerAt: Long,
     val state: String = ReminderState.SCHEDULED,
+    /** 闹钟/PendingIntent 编号，用行 id：稳定唯一；哈希碰撞会互相覆盖闹钟 */
     val requestCode: Int,
     /** taskId|kind|yyyy-MM-dd，唯一，防重复 */
     val dedupeKey: String,

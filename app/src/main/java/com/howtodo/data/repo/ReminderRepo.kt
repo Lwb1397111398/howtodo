@@ -71,11 +71,16 @@ class ReminderRepo(private val db: AppDatabase) {
                 projectId = task.projectId,
                 kind = kind,
                 triggerAt = triggerAt,
-                requestCode = (key.hashCode() and 0x7FFFFFFF),
+                requestCode = 0,
                 dedupeKey = key
             )
+            // dedupeKey 唯一索引 + IGNORE：重复 key 插不进去（返回 -1），天然幂等
             val id = dao.insert(entity)
-            if (id > 0) out.add(entity.copy(id = id))
+            if (id > 0) {
+                // requestCode 用行 id：稳定唯一；哈希值会在碰撞时互相覆盖闹钟
+                dao.updateRequestCode(id, id.toInt())
+                out.add(entity.copy(id = id, requestCode = id.toInt()))
+            }
         }
 
         if (d3) add(ReminderKind.D3, at(dueDate.minusDays(3), LocalTime.of(9, 0)))

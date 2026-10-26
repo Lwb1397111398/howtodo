@@ -17,6 +17,14 @@ import java.util.UUID
  */
 class Storage(private val context: Context) {
 
+    companion object {
+        /** 单文件导入上限：超过会拖垮视觉解析与内存 */
+        const val MAX_IMPORT_BYTES = 80L * 1024 * 1024
+    }
+
+    /** 文件超过导入上限。调用方应向用户明示原因，不要当作普通读取失败静默吞掉 */
+    class FileTooLargeException : Exception("文件超过 ${MAX_IMPORT_BYTES / (1024 * 1024)}MB 导入上限")
+
     private val root: File get() = context.filesDir
 
     val materialsDir: File
@@ -59,6 +67,7 @@ class Storage(private val context: Context) {
         val target = materialFile(id)
         val digest = MessageDigest.getInstance("SHA-256")
         var size = 0L
+        var tooLarge = false
 
         try {
             val input: InputStream = resolver.openInputStream(uri) ?: return null
@@ -71,14 +80,22 @@ class Storage(private val context: Context) {
                         digest.update(buf, 0, n)
                         outs.write(buf, 0, n)
                         size += n
-                        // 单文件上限 80MB，防止异常大文件拖垮解析
-                        if (size > 80L * 1024 * 1024) break
+                        // 单文件上限，防止异常大文件拖垮解析
+                        if (size > MAX_IMPORT_BYTES) {
+                            tooLarge = true
+                            break
+                        }
                     }
                 }
             }
         } catch (_: Throwable) {
             tmp.delete()
             return null
+        }
+        if (tooLarge) {
+            // 拒绝导入残缺文件：明确抛错让调用方提示，而不是把半截文件当成功
+            tmp.delete()
+            throw FileTooLargeException()
         }
 
         if (!tmp.renameTo(target)) {

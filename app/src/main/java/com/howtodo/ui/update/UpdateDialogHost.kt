@@ -79,14 +79,14 @@ fun UpdateDialogHost(updateManager: UpdateManager) {
         )
 
         is UpdateUiState.Downloaded -> AlertDialog(
-            onDismissRequest = {},
+            onDismissRequest = { updateManager.toIdle() },
             title = { Text("更新已下载") },
             text = { Text("点「安装」调起系统安装器覆盖安装新版本。用户数据不会丢失。") },
             confirmButton = {
                 TextButton(onClick = { updateManager.installNow() }) { Text("安装") }
             },
             dismissButton = {
-                TextButton(onClick = {}) { Text("取消") }
+                TextButton(onClick = { updateManager.toIdle() }) { Text("暂不安装") }
             }
         )
 

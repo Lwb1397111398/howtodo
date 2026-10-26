@@ -69,16 +69,28 @@ class ReminderReceiver : BroadcastReceiver() {
                         val taskId = reminder?.taskId ?: intent.getStringExtra("taskId")
                         if (taskId != null) {
                             val task = container.taskRepo.byId(taskId)
-                            if (task != null && task.status != TaskStatus.DONE) {
-                                Notifications.showTaskReminder(
-                                    context,
-                                    task,
-                                    reminder?.kind ?: "D0",
-                                    reminderId
-                                )
+                            // 已完成/已取消的任务到点不再提醒
+                            if (task != null && task.status != TaskStatus.DONE && task.status != TaskStatus.CANCELLED) {
+                                if (androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled()) {
+                                    Notifications.showTaskReminder(
+                                        context,
+                                        task,
+                                        reminder?.kind ?: "D0",
+                                        reminderId
+                                    )
+                                    reminder?.let { container.reminderRepo.markFired(it.id) }
+                                } else {
+                                    // 无权限发不出去：记「错过」而不是「已提醒」，别让数据库假装送达
+                                    reminder?.let {
+                                        container.db.reminderDao().setState(it.id, com.howtodo.data.db.ReminderState.MISSED)
+                                    }
+                                }
+                            } else {
+                                reminder?.let { container.reminderRepo.markFired(it.id) }
                             }
+                        } else {
+                            reminder?.let { container.reminderRepo.markFired(it.id) }
                         }
-                        reminder?.let { container.reminderRepo.markFired(it.id) }
                     } finally {
                         pending.finish()
                     }

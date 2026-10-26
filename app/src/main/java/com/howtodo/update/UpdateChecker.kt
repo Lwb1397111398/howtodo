@@ -50,7 +50,11 @@ class UpdateChecker(private val repoOwner: String, private val repoName: String)
                     200 -> {
                         val body = conn.inputStream.use { it.readBytes().toString(Charsets.UTF_8) }
                         val info = UpdateParser.parseRelease(body)
-                            ?: return Result.NetworkError("云端发布的内容不完整，稍后再试")
+                        if (info == null) {
+                            // 直连被劫持/返回坏数据时换下一通道，多源轮换在这里才有意义
+                            lastError = "云端发布的内容不完整"
+                            continue
+                        }
                         return if (info.versionCode > localVersionCode) {
                             // 记住查询成功的通道，下载优先复用它
                             Result.Available(info.copy(sourcePrefix = prefix))

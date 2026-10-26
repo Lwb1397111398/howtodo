@@ -434,8 +434,17 @@ private suspend fun extractFromImages(
     val images = ArrayList<com.howtodo.ai.LlmClient.Part.Image>()
     uris.forEach { uri ->
         val id = c.storage.newId()
-        val copied = c.storage.copyFromUri(uri, id) ?: return@forEach
-        val prepared = ImageIngest.prepare(copied.file) ?: return@forEach
+        val copied = try {
+            c.storage.copyFromUri(uri, id)
+        } catch (_: com.howtodo.util.Storage.FileTooLargeException) {
+            return@forEach
+        } ?: return@forEach
+        // 准备失败（读不出图）也要清掉已拷贝的临时副本，否则留下无记录的孤儿文件
+        val prepared = ImageIngest.prepare(copied.file)
+        if (prepared == null) {
+            copied.file.delete()
+            return@forEach
+        }
         images.add(com.howtodo.ai.LlmClient.Part.Image(prepared.mime, prepared.base64))
         copied.file.delete()
     }

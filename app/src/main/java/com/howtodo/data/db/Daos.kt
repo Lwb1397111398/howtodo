@@ -403,6 +403,9 @@ interface ReminderDao {
     @Query("SELECT * FROM reminder WHERE dedupeKey = :key LIMIT 1")
     suspend fun byDedupe(key: String): ReminderEntity?
 
+    @Query("UPDATE reminder SET requestCode = :code WHERE id = :id")
+    suspend fun updateRequestCode(id: Long, code: Int)
+
     @Query("UPDATE reminder SET state = :state, firedAt = :at WHERE id = :id")
     suspend fun setState(id: Long, state: String, at: Long? = System.currentTimeMillis())
 

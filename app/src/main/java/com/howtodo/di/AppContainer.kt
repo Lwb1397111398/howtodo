@@ -38,12 +38,14 @@ class AppContainer(context: Context) {
 
     val projectRepo = ProjectRepo(db)
     val sourceRepo = SourceRepo(db, storage)
-    val taskRepo = TaskRepo(db)
-    val proposalRepo = ProposalRepo(db)
     val providerRepo = ProviderRepo(db)
     val knowledgeRepo = KnowledgeRepo(db)
     val chatRepo = ChatRepo(db)
     val reminderRepo = ReminderRepo(db)
+    val alarmScheduler = AlarmScheduler(appContext, reminderRepo)
+    // TaskRepo 依赖 reminderRepo/alarmScheduler：取消任务撤提醒、重开任务补排提醒
+    val taskRepo = TaskRepo(db, reminderRepo, alarmScheduler)
+    val proposalRepo = ProposalRepo(db)
 
     val llmClient = LlmClient()
     val router = AiRouter(providerRepo, llmClient)
@@ -56,7 +58,6 @@ class AppContainer(context: Context) {
     )
     val retriever = Retriever(db, router)
     val answerer = Answerer(db, retriever, router, knowledgeRepo)
-    val alarmScheduler = AlarmScheduler(appContext, reminderRepo)
     val updateManager = UpdateManager(appContext)
 
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)

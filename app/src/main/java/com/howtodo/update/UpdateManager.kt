@@ -108,7 +108,7 @@ class UpdateManager(private val context: Context) {
     }
 
     fun toIdle() {
-        if (_state.value is UpdateUiState.Downloaded) return
+        // Downloaded 允许退出：下载完的包留在缓存里，下次下载同版本直接复用，不必强制安装
         if (_state.value is UpdateUiState.Downloading) return
         _state.value = UpdateUiState.Idle
     }

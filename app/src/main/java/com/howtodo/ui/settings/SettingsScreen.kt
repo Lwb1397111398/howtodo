@@ -85,7 +85,6 @@ fun SettingsScreen(onOpenProvider: (String) -> Unit) {
 
     var editingRole by remember { mutableStateOf<String?>(null) }
     var message by remember { mutableStateOf<String?>(null) }
-    var askRestart by remember { mutableStateOf(false) }
     var materialsKb by remember { mutableStateOf(0L) }
 
     LaunchedEffect(Unit) {
@@ -94,7 +93,7 @@ fun SettingsScreen(onOpenProvider: (String) -> Unit) {
         d3 = c.reminderRepo.isOffsetEnabled(ReminderRepo.KEY_D3_ENABLED, true)
         d1 = c.reminderRepo.isOffsetEnabled(ReminderRepo.KEY_D1_ENABLED, true)
         d0 = c.reminderRepo.isOffsetEnabled(ReminderRepo.KEY_D0_ENABLED, true)
-        materialsKb = withContext(Dispatchers.IO) { BackupManager(ctx).materialsSizeKb() }
+        materialsKb = withContext(Dispatchers.IO) { BackupManager(ctx, c.db).materialsSizeKb() }
     }
 
     var notificationsOn by remember { mutableStateOf(true) }
@@ -113,7 +112,7 @@ fun SettingsScreen(onOpenProvider: (String) -> Unit) {
         ActivityResultContracts.RequestPermission()
     ) { refreshPerms() }
 
-    val backup = remember { BackupManager(ctx) }
+    val backup = remember { BackupManager(ctx, c.db) }
     val createDoc = rememberLauncherForActivityResult(
         ActivityResultContracts.CreateDocument("application/zip")
     ) { uri -> uri?.let { u ->
@@ -126,12 +125,19 @@ fun SettingsScreen(onOpenProvider: (String) -> Unit) {
         ActivityResultContracts.OpenDocument()
     ) { uri -> uri?.let { u ->
         scope.launch {
-            val r = withContext(Dispatchers.IO) {
-                runCatching { c.db.close() }
-                backup.importFrom(u)
+            message = withContext(Dispatchers.IO) {
+                try {
+                    // 两段式：先解包暂存（此时库还开着，零风险），再关库换文件并立即重启，
+                    // 不给任何后台协程在换库中途重开连接留窗口
+                    val staged = backup.stageImport(u)
+                    runCatching { c.db.close() }
+                    val r = backup.commitImport(staged)
+                    if (r.ok) BackupManager.restartApp(ctx)
+                    r.message
+                } catch (e: Throwable) {
+                    "恢复失败：${e.message}"
+                }
             }
-            message = r.message
-            askRestart = r.ok
         }
     } }
 
@@ -423,13 +429,7 @@ fun SettingsScreen(onOpenProvider: (String) -> Unit) {
             title = { Text("提示") },
             text = { Text(msg) },
             confirmButton = {
-                TextButton(onClick = {
-                    message = null
-                    if (askRestart) {
-                        askRestart = false
-                        (ctx as? android.app.Activity)?.finishAffinity()
-                    }
-                }) { Text("好") }
+                TextButton(onClick = { message = null }) { Text("好") }
             }
         )
     }

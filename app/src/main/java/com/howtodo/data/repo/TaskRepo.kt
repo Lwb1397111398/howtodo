@@ -4,9 +4,14 @@ import com.howtodo.data.db.AppDatabase
 import com.howtodo.data.db.TaskEntity
 import com.howtodo.data.db.TaskEvidenceEntity
 import com.howtodo.data.db.TaskStatus
+import com.howtodo.notify.AlarmScheduler
 import kotlinx.coroutines.flow.Flow
 
-class TaskRepo(private val db: AppDatabase) {
+class TaskRepo(
+    private val db: AppDatabase,
+    private val reminderRepo: ReminderRepo,
+    private val alarmScheduler: AlarmScheduler
+) {
 
     private val dao get() = db.taskDao()
     private val viewDao get() = db.taskViewDao()
@@ -39,13 +44,20 @@ class TaskRepo(private val db: AppDatabase) {
     suspend fun setStatus(id: String, status: String) {
         val doneAt = if (status == TaskStatus.DONE) System.currentTimeMillis() else null
         dao.setStatus(id, status, doneAt)
-        if (status == TaskStatus.DONE) db.reminderDao().cancelByTask(id)
+        // 已完成/已取消的任务不再提醒（已注册的闹钟到点后由 Receiver 的状态检查兜底跳过）
+        if (status == TaskStatus.DONE || status == TaskStatus.CANCELLED) {
+            db.reminderDao().cancelByTask(id)
+        }
     }
 
     suspend fun toggleDone(id: String) {
         val t = dao.byId(id) ?: return
         val next = if (t.status == TaskStatus.DONE) TaskStatus.TODO else TaskStatus.DONE
         setStatus(id, next)
+        if (next == TaskStatus.TODO) {
+            // 误标完成又重新打开的任务把提醒排回去（已过期的档位会被自动跳过）
+            reminderRepo.rescheduleTask(t).forEach { alarmScheduler.schedule(it) }
+        }
     }
 
     suspend fun addEvidence(list: List<TaskEvidenceEntity>) {
