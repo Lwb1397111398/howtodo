@@ -47,6 +47,13 @@ class ExtractionService(
 
     class ExtractionException(message: String) : IllegalStateException(message)
 
+    /** 启动兜底：分析已改在应用级作用域跑，但进程被杀仍会留下卡在 EXTRACTING 的批次，置 FAILED 让用户能重新分析 */
+    suspend fun failStaleBatches() {
+        db.batchDao().stale().forEach {
+            db.batchDao().setStatus(it.id, BatchStatus.FAILED, "分析被中断（应用退出），请重新勾选材料分析")
+        }
+    }
+
     suspend fun analyze(
         projectId: String,
         sourceIds: List<String>,
@@ -254,7 +261,8 @@ class ExtractionService(
         }
 
         if (picked.isEmpty()) {
-            // 兜底：至少塞前 3000 字的第一个片段
+            // 兜底：至少塞第一个片段。单块可能远超预算（OCR 长输出等），
+            // 渲染时用 truncate 压回预算内，避免 prompt 直接爆掉模型上下文
             bySource.values.firstOrNull()?.firstOrNull()?.let {
                 picked.add(it)
                 map[it.id] = it
@@ -271,7 +279,8 @@ class ExtractionService(
             sb.append("[C").append(c.id).append("] 《").append(name).append("》")
             if (c.pageNo != null) sb.append(" P").append(c.pageNo)
             sb.append('\n')
-            sb.append(c.text).append("\n\n")
+            // 单块超预算时截断渲染（map 里仍存原文，证据校验不受影响）
+            sb.append(TokenBudget.truncate(c.text, usable)).append("\n\n")
         }
         return sb.toString().trim() to map
     }

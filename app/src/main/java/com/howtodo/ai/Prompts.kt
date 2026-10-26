@@ -52,7 +52,7 @@ object Prompts {
         6. 任务数量控制在 3~8 条。把同一件事的多个小步骤合并成一条，细节写进 detail。
         7. 不要编造人名、地点、电话、金额。
         8. 如果材料里出现了人物的办公室、上下班时间、联系方式等**长期有效**的信息，放进 entities，不要放进任务。
-        9. 今天日期是 {today}。若材料含相对时间（如"下周三"），只有在能确定基准日时才换算成绝对日期，并把 raw_text 原样保留；不确定就 date=null 并在 unknowns 里说明。
+        9. 若材料含相对时间（如"下周三"），只有在能确定基准日时才换算成绝对日期，并把 raw_text 原样保留；不确定就 date=null 并在 unknowns 里说明。今天的日期在用户消息里。
     """.trimIndent()
 
     fun baselineUser(context: String, today: String, knownFacts: String): String = buildString {
@@ -118,7 +118,7 @@ object Prompts {
         4. 日期同样必须有 raw_text 依据，否则给 null。
         5. evidence.quote 必须逐字来自对应 chunk。
         6. 已标记为 DONE 的任务不要 update（系统会拦），如果新要求与已完成任务矛盾，写进 conflicts。
-        7. 今天日期是 {today}。
+        7. 今天的日期在用户消息里。
     """.trimIndent()
 
     fun patchUser(currentTasks: String, context: String, today: String, knownFacts: String): String = buildString {

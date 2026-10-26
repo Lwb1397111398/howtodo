@@ -13,7 +13,10 @@ object TokenBudget {
         var cjk = 0
         var ascii = 0
         for (ch in text) {
-            if (ch.code in 0x3400..0x9fff || ch.code in 0xf900..0xfaff) cjk++ else ascii++
+            val c = ch.code
+            // 中文标点（U+3000–303F）与全角符号（U+FF00–FFEF）也按整字算，
+            // 公文里标点密集，旧算法把它们当 0.25 token 会明显低估用量
+            if (c in 0x3000..0x9fff || c in 0xf900..0xfaff || c in 0xff00..0xffef) cjk++ else ascii++
         }
         return (cjk * 0.75 + ascii * 0.25).toInt() + 1
     }

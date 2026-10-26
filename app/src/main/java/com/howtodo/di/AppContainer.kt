@@ -24,6 +24,23 @@ import com.howtodo.util.Storage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+
+/**
+ * 后台分析的可观察状态。
+ * null = 空闲；proposalId / error 任一非 null 表示已结束（成功/失败）。
+ * 分析跑在 appScope 上，用户离开页面不会中断，界面只负责订阅展示。
+ */
+data class AnalysisState(
+    val projectId: String,
+    val message: String,
+    val proposalId: String? = null,
+    val error: String? = null
+)
 
 /**
  * 手写依赖容器。
@@ -46,7 +63,6 @@ class AppContainer(context: Context) {
     // TaskRepo 依赖 reminderRepo/alarmScheduler：取消任务撤提醒、重开任务补排提醒
     val taskRepo = TaskRepo(db, reminderRepo, alarmScheduler)
     val proposalRepo = ProposalRepo(db)
-
     val llmClient = LlmClient()
     val router = AiRouter(providerRepo, llmClient)
     val vision = VisionOcr(router)
@@ -61,4 +77,32 @@ class AppContainer(context: Context) {
     val updateManager = UpdateManager(appContext)
 
     val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    // ---------------- 后台分析（App 级作用域，离开页面不中断）----------------
+
+    private val _analysisState = MutableStateFlow<AnalysisState?>(null)
+    val analysisState: StateFlow<AnalysisState?> = _analysisState.asStateFlow()
+
+    /** 在应用级作用域启动分析；已有分析在跑时忽略本次请求 */
+    fun startAnalysis(projectId: String, sourceIds: List<String>) {
+        _analysisState.value?.let { cur ->
+            if (cur.proposalId == null && cur.error == null) return
+        }
+        appScope.launch {
+            _analysisState.value = AnalysisState(projectId, "准备分析…")
+            val r = extraction.analyze(projectId, sourceIds) { msg ->
+                _analysisState.update { it?.copy(message = msg) }
+            }
+            val cur = _analysisState.value ?: return@launch
+            _analysisState.value = r.fold(
+                onSuccess = { cur.copy(proposalId = it.proposalId) },
+                onFailure = { e -> cur.copy(error = e.message ?: "分析失败") }
+            )
+        }
+    }
+
+    /** 界面消费完结果或用户选「后台运行」后调用 */
+    fun dismissAnalysis() {
+        _analysisState.value = null
+    }
 }

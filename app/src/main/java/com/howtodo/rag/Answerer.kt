@@ -157,16 +157,12 @@ class Answerer(
         target: AiRouter.Target,
         messages: List<LlmClient.Msg>
     ): LlmClient.Result {
-        val client = LlmClient()
-        return client.chat(
-            baseUrl = target.baseUrl,
-            apiKey = target.apiKey,
-            model = target.modelId,
+        // 复用 AiRouter 里的单例 HTTP 客户端；旧写法每次问答 new 一个 OkHttpClient，连接池全浪费
+        return router.chatWith(
+            target = target,
             messages = messages,
             temperature = 0.3,
-            maxTokens = minOf(target.binding.maxOutputTokens, 4096).coerceAtLeast(1024),
-            jsonMode = false,
-            extraHeaders = target.extraHeaders
+            maxTokens = minOf(target.binding.maxOutputTokens, 4096).coerceAtLeast(1024)
         )
     }
 
@@ -185,7 +181,8 @@ class Answerer(
             val label = "S$idx"
             val page = h.chunk.pageNo?.let { " P$it" } ?: ""
             sb.append("[$label] 《").append(h.sourceName).append('》').append(page).append('\n')
-            sb.append(h.chunk.text).append("\n\n")
+            // 首块必装且可能远超预算，统一压回预算内，避免 prompt 爆上下文
+            sb.append(TokenBudget.truncate(h.chunk.text, usable)).append("\n\n")
             used += cost
 
             val c = JsonObject()

@@ -29,6 +29,10 @@ class AiRouter(
     class NotConfigured(val role: String) :
         IllegalStateException("未配置「${AiRole.label(role)}」使用的模型，请到设置里绑定一个供应商和模型")
 
+    /** API Key 密文解不开（Keystore 被清除/换机迁移），与「没配置」是两回事，别误导用户去绑定 */
+    class KeyBroken(val providerName: String) :
+        IllegalStateException("供应商「$providerName」的 API Key 解密失败（系统密钥库被清除或换机迁移），请到设置里重新填写并保存")
+
     /** 按角色取目标；该角色未绑定时回退到推理/问答角色 */
     suspend fun target(role: String): Target {
         val chain = when (role) {
@@ -42,7 +46,12 @@ class AiRouter(
             val pid = binding.providerId ?: continue
             val mid = binding.modelId ?: continue
             val provider = providerRepo.byId(pid) ?: continue
-            val key = providerRepo.apiKeyOf(provider) ?: continue
+            val key = providerRepo.apiKeyOf(provider)
+            if (key == null) {
+                // 有密文但解不开：这是 Key 坏了不是没配置，明确报错而不是静默换下一个供应商
+                if (providerRepo.apiKeyBroken(provider)) throw KeyBroken(provider.name)
+                continue
+            }
             return Target(
                 role = role,
                 providerId = pid,
@@ -115,6 +124,23 @@ class AiRouter(
             extraHeaders = t.extraHeaders
         )
     }
+
+    /** 对指定 target 直接发一组自带历史的消息（问答等场景），复用单例 HTTP 客户端 */
+    suspend fun chatWith(
+        target: Target,
+        messages: List<LlmClient.Msg>,
+        temperature: Double,
+        maxTokens: Int
+    ): LlmClient.Result = client.chat(
+        baseUrl = target.baseUrl,
+        apiKey = target.apiKey,
+        model = target.modelId,
+        messages = messages,
+        temperature = temperature,
+        maxTokens = maxTokens,
+        jsonMode = false,
+        extraHeaders = target.extraHeaders
+    )
 
     /** 调用并解析 JSON，失败时带着原始响应返回，便于用户看到问题所在 */
     suspend fun chatJson(

@@ -155,6 +155,10 @@ interface BatchDao {
     @Query("SELECT * FROM batch WHERE projectId = :projectId ORDER BY createdAt DESC LIMIT 1")
     suspend fun latest(projectId: String): BatchEntity?
 
+    /** 上次进程退出时卡在「解析中」的批次，启动时由调用方置 FAILED */
+    @Query("SELECT * FROM batch WHERE status = 'EXTRACTING'")
+    suspend fun stale(): List<BatchEntity>
+
     @Query("UPDATE batch SET status = :status, error = :error, finishedAt = :at WHERE id = :id")
     suspend fun setStatus(id: String, status: String, error: String? = null, at: Long? = System.currentTimeMillis())
 }

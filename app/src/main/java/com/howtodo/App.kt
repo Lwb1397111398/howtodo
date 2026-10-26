@@ -21,6 +21,8 @@ class App : Application() {
         container.appScope.launch {
             runCatching { FtsStore.ensure(container.db.openHelper.writableDatabase) }
             runCatching { container.reminderRepo.purgeOld() }
+            // 上次分析没跑完（进程被杀）的批次置失败，让用户能重新分析
+            runCatching { container.extraction.failStaleBatches() }
             // 开机/冷启动后重建闹钟：Android 重启会清掉所有 AlarmManager 闹钟
             runCatching { container.alarmScheduler.rescheduleAll() }
             // 上次没解析完的材料续上

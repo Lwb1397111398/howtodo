@@ -67,6 +67,7 @@ fun ProviderScreen(providerId: String, onBack: () -> Unit) {
     var baseUrl by remember { mutableStateOf("https://") }
     var apiKey by remember { mutableStateOf("") }
     var existingKeyMasked by remember { mutableStateOf<String?>(null) }
+    var keyBroken by remember { mutableStateOf(false) }
     var models by remember { mutableStateOf<List<ProviderModelEntity>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
@@ -79,6 +80,7 @@ fun ProviderScreen(providerId: String, onBack: () -> Unit) {
         if (p != null) {
             name = p.name
             baseUrl = p.baseUrl
+            keyBroken = c.providerRepo.apiKeyBroken(p)
             existingKeyMasked = com.howtodo.util.Crypto.mask(c.providerRepo.apiKeyOf(p))
             models = withContext(Dispatchers.IO) { c.providerRepo.models(pid) }
         }
@@ -92,6 +94,7 @@ fun ProviderScreen(providerId: String, onBack: () -> Unit) {
             }
             id = p.id
             apiKey = ""
+            keyBroken = c.providerRepo.apiKeyBroken(p)
             existingKeyMasked = com.howtodo.util.Crypto.mask(c.providerRepo.apiKeyOf(p))
             if (thenFetch) {
                 val key = c.providerRepo.apiKeyOf(p).orEmpty()
@@ -181,6 +184,14 @@ fun ProviderScreen(providerId: String, onBack: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 4.dp, top = 4.dp)
                 )
+                if (keyBroken) {
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "⚠ 此供应商的 API Key 解密失败（系统密钥库被清除或换机迁移）。请重新填写 Key 并保存，否则所有调用都会报「解密失败」。",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
 
                 Spacer(Modifier.height(16.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

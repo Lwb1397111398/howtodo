@@ -117,6 +117,7 @@ fun ProjectScreen(
         .collectAsState(initial = emptyList())
     val proposals by remember(projectId) { c.proposalRepo.observeByProject(projectId) }
         .collectAsState(initial = emptyList())
+    val analysis by c.analysisState.collectAsState()
 
     var tab by remember { mutableStateOf(0) }
     var showMenu by remember { mutableStateOf(false) }
@@ -294,27 +295,8 @@ fun ProjectScreen(
                         if (ids.isEmpty()) {
                             error = "先勾选要分析的材料"
                         } else {
-                            scope.launch {
-                                busy = "准备分析…"
-                                try {
-                                    val r = withContext(Dispatchers.IO) {
-                                        c.extraction.analyze(projectId, ids.toList()) { msg ->
-                                            busy = msg
-                                        }
-                                    }
-                                    busy = null
-                                    r.fold(
-                                        onSuccess = { res ->
-                                            selected = emptySet()
-                                            onOpenProposal(res.proposalId)
-                                        },
-                                        onFailure = { e -> error = e.message ?: "分析失败" }
-                                    )
-                                } catch (e: Throwable) {
-                                    busy = null
-                                    error = e.message ?: "分析失败"
-                                }
-                            }
+                            // 应用级作用域后台跑：中途离开页面分析不会断，进度经 c.analysisState 订阅回来
+                            c.startAnalysis(projectId, ids.toList())
                         }
                     },
                     onImport = { showImport = true },
@@ -374,6 +356,40 @@ fun ProjectScreen(
             },
             confirmButton = {}
         )
+    }
+
+    // 后台分析进度：跑在应用级作用域，可「后台运行」收起，离开页面也不会断
+    val activeAnalysis = analysis?.takeIf {
+        it.projectId == projectId && it.proposalId == null && it.error == null
+    }
+    if (activeAnalysis != null) {
+        AlertDialog(
+            onDismissRequest = { },
+            title = { Text("正在分析") },
+            text = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Text(activeAnalysis.message, style = MaterialTheme.typography.bodyMedium)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { c.dismissAnalysis() }) { Text("后台运行") }
+            }
+        )
+    }
+
+    // 分析结束的两种收尾：成功跳提案页，失败进错误弹窗
+    LaunchedEffect(analysis?.proposalId) {
+        val pid = analysis?.proposalId ?: return@LaunchedEffect
+        c.dismissAnalysis()
+        selected = emptySet()
+        onOpenProposal(pid)
+    }
+    LaunchedEffect(analysis?.error) {
+        val e = analysis?.error ?: return@LaunchedEffect
+        c.dismissAnalysis()
+        error = e
     }
 
     if (error != null) {

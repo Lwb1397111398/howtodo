@@ -1,5 +1,6 @@
 package com.howtodo.data.repo
 
+import androidx.room.withTransaction
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
@@ -91,18 +92,22 @@ class ProposalRepo(private val db: AppDatabase) {
      * 应用所有 ACCEPT 的条目。
      * 若 proposal.baseRev 与 project.schemaRev 不一致，说明期间已有其他变更，
      * 置 SUPERSEDED 不静默应用，提示用户重新分析。
+     *
+     * 全程单事务：连写 task/evidence/log/reminder/proposal/batch 六张表，
+     * 中途任何一步失败整体回滚，不会留下「任务改了一半、提案还是待处理」的脏状态。
      */
-    suspend fun apply(proposalId: String): Result<ApplyResult> {
-        val proposal = dao.byId(proposalId) ?: return Result.failure(IllegalStateException("提案不存在"))
+    suspend fun apply(proposalId: String): Result<ApplyResult> = db.withTransaction {
+        val proposal = dao.byId(proposalId)
+            ?: return@withTransaction Result.failure(IllegalStateException("提案不存在"))
         val project = db.projectDao().byId(proposal.projectId)
-            ?: return Result.failure(IllegalStateException("工作不存在"))
+            ?: return@withTransaction Result.failure(IllegalStateException("工作不存在"))
 
         if (proposal.state != ProposalState.PENDING && proposal.state != ProposalState.PARTIALLY_APPLIED) {
-            return Result.failure(IllegalStateException("该提案已处理"))
+            return@withTransaction Result.failure(IllegalStateException("该提案已处理"))
         }
         if (proposal.baseRev != project.schemaRev) {
             dao.setState(proposalId, ProposalState.SUPERSEDED, null)
-            return Result.failure(IllegalStateException("材料或清单已变更，该提案已过期，请重新分析"))
+            return@withTransaction Result.failure(IllegalStateException("材料或清单已变更，该提案已过期，请重新分析"))
         }
 
         val items = itemDao.byProposal(proposalId).filter { it.decision == ItemDecision.ACCEPT }
@@ -206,7 +211,7 @@ class ProposalRepo(private val db: AppDatabase) {
         dao.setState(proposalId, ProposalState.APPLIED)
         db.batchDao().setStatus(proposal.batchId, com.howtodo.data.db.BatchStatus.APPLIED)
         db.projectDao().touch(project.id)
-        return Result.success(ApplyResult(created, updated, cancelled, warnings))
+        Result.success(ApplyResult(created, updated, cancelled, warnings))
     }
 
     private suspend fun applyUpdate(
@@ -314,10 +319,10 @@ class ProposalRepo(private val db: AppDatabase) {
         logDao.insert(entry)
     }
 
-    /** 撤销整批应用：按日志逆序恢复快照 */
-    suspend fun undo(proposalId: String): Result<Int> {
+    /** 撤销整批应用：按日志逆序恢复快照。单事务，撤销到一半失败会整体回滚。 */
+    suspend fun undo(proposalId: String): Result<Int> = db.withTransaction {
         val logs = logDao.byProposal(proposalId)
-        if (logs.isEmpty()) return Result.failure(IllegalStateException("没有可撤销的变更"))
+        if (logs.isEmpty()) return@withTransaction Result.failure(IllegalStateException("没有可撤销的变更"))
         var n = 0
         for (entry in logs) {
             when (entry.op) {
@@ -352,7 +357,7 @@ class ProposalRepo(private val db: AppDatabase) {
             dao.setState(proposalId, ProposalState.PENDING, null)
             db.projectDao().bumpRev(proposal.projectId)
         }
-        return Result.success(n)
+        Result.success(n)
     }
 
     suspend fun recentChanges(projectId: String, limit: Int = 100) = logDao.recent(projectId, limit)

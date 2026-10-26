@@ -54,6 +54,10 @@ class ProviderRepo(private val db: AppDatabase) {
         return Crypto.decrypt(p.apiKeyCipher, p.apiKeyIv)
     }
 
+    /** true = 存过 Key 但现在解不开（换机迁移/系统密钥库被清除），需要用户重新填写 */
+    fun apiKeyBroken(p: ProviderEntity): Boolean =
+        p.apiKeyCipher.isNotEmpty() && Crypto.decrypt(p.apiKeyCipher, p.apiKeyIv) == null
+
     fun extraHeadersOf(p: ProviderEntity): Map<String, String> {
         val raw = p.extraHeaders ?: return emptyMap()
         return try {

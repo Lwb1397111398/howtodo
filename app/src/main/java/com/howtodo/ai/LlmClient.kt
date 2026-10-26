@@ -4,6 +4,9 @@ import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runInterruptible
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -44,7 +47,7 @@ class LlmClient(
         val finishReason: String?
     )
 
-    data class Failure(val message: String, val code: Int = -1)
+    data class Failure(val message: String, val code: Int = -1, val retryAfterMillis: Long = 0)
 
     /** 调用结果 */
     sealed class Result {
@@ -52,7 +55,11 @@ class LlmClient(
         data class Err(val error: Failure) : Result()
     }
 
-    fun chat(
+    /**
+     * 调用模型。挂起函数：重试等待用 delay（协程取消时立即停止），
+     * 阻塞的 HTTP 调用跑在 IO 线程并响应线程中断——取消调用不会占死线程。
+     */
+    suspend fun chat(
         baseUrl: String,
         apiKey: String,
         model: String,
@@ -78,15 +85,23 @@ class LlmClient(
                         useJsonMode = false
                         return@repeat
                     }
+                    // 「不被支持」与提到 token 参数必须同时成立；
+                    // 原写法运算符优先级错了，任何报错里带 max_completion_tokens 都会误切参数
                     if (!useMaxCompletionTokens &&
-                        (msg.contains("max_completion_tokens", true) || msg.contains("max_tokens", true) &&
-                            msg.contains("not supported", true))
+                        msg.contains("not supported", true) &&
+                        (msg.contains("max_completion_tokens", true) || msg.contains("max_tokens", true))
                     ) {
                         useMaxCompletionTokens = true
                         return@repeat
                     }
                     if (attempt < 2 && result.error.code in RETRYABLE) {
-                        Thread.sleep(800L * (attempt + 1))
+                        // 429 优先按服务端的 Retry-After 等（封顶 30 秒），其余线性退避
+                        val wait = if (result.error.code == 429 && result.error.retryAfterMillis > 0) {
+                            result.error.retryAfterMillis
+                        } else {
+                            800L * (attempt + 1)
+                        }
+                        delay(wait)
                         return@repeat
                     }
                     return result
@@ -151,15 +166,16 @@ class LlmClient(
         return gson.toJson(root)
     }
 
-    private fun post(
+    /** 阻塞的 HTTP 调用跑在 IO 线程，协程取消时以线程中断打断它，不再占死线程 */
+    private suspend fun post(
         baseUrl: String,
         apiKey: String,
         body: String,
         extraHeaders: Map<String, String>,
         timeoutSeconds: Long
-    ): Result {
+    ): Result = runInterruptible(Dispatchers.IO) {
         val url = joinUrl(baseUrl, "chat/completions")
-        return try {
+        try {
             val builder = Request.Builder()
                 .url(url)
                 .addHeader("Content-Type", "application/json")
@@ -178,13 +194,22 @@ class LlmClient(
             client.newCall(builder.build()).execute().use { resp ->
                 val text = resp.body?.string().orEmpty()
                 if (!resp.isSuccessful) {
-                    return Result.Err(Failure(extractError(text) ?: "HTTP ${resp.code}", resp.code))
+                    val retryAfter = if (resp.code == 429) parseRetryAfter(resp.header("Retry-After")) else 0L
+                    return@runInterruptible Result.Err(
+                        Failure(extractError(text) ?: "HTTP ${resp.code}", resp.code, retryAfter)
+                    )
                 }
                 parseResponse(text)
             }
         } catch (e: Throwable) {
             Result.Err(Failure(e.message ?: e.javaClass.simpleName, -2))
         }
+    }
+
+    /** Retry-After 头只认秒数格式（HTTP 日期格式与非法值一律按 0 处理），封顶 30 秒 */
+    private fun parseRetryAfter(value: String?): Long {
+        val secs = value?.trim()?.toLongOrNull() ?: return 0L
+        return secs.coerceIn(0, 30) * 1000
     }
 
     private fun parseResponse(text: String): Result {
