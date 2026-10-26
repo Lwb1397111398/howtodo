@@ -24,6 +24,16 @@ class TokenBudgetTest {
     }
 
     @Test
+    fun `中文标点与全角符号按整字估算而不是 ASCII`() {
+        // 全角逗号 U+FF0C、中文逗号 U+3001：修复前被当 0.25 token 低估
+        // 1 * 0.75 -> 0，加固定 +1
+        assertEquals(1, TokenBudget.estimate("，"))
+        assertEquals(1, TokenBudget.estimate("、"))
+        // 7 个全角字符（报名表，收到。）：7*0.75=5.25 -> 5，加 +1
+        assertEquals(6, TokenBudget.estimate("报名表，收到。"))
+    }
+
+    @Test
     fun `英文按每字符 0_25 估算`() {
         // 8 * 0.25 = 2.0 -> 2，再加固定 +1
         assertEquals(3, TokenBudget.estimate("abcdefgh"))

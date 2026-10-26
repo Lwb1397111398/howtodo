@@ -6,11 +6,9 @@ import com.howtodo.data.db.ReminderKind
 import com.howtodo.data.db.ReminderState
 import com.howtodo.data.db.TaskEntity
 import com.howtodo.data.db.TaskStatus
-import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
 import java.time.ZoneId
-import java.time.format.DateTimeFormatter
 
 /**
  * 提醒计划生成。
@@ -32,8 +30,6 @@ class ReminderRepo(private val db: AppDatabase) {
         const val DEFAULT_DIGEST_HOUR = 8
         const val DEFAULT_DIGEST_MINUTE = 0
     }
-
-    private val dayFmt = DateTimeFormatter.ofPattern("yyyy-MM-dd")
 
     private fun zone(): ZoneId = ZoneId.systemDefault()
 
@@ -69,19 +65,15 @@ class ReminderRepo(private val db: AppDatabase) {
         val due = task.dueAt ?: return emptyList()
 
         val now = System.currentTimeMillis()
-        val dueDate = Instant.ofEpochMilli(due).atZone(zone()).toLocalDate()
         val out = ArrayList<ReminderEntity>()
-
-        suspend fun add(kind: String, triggerAt: Long) {
-            if (triggerAt <= now + 60_000) return
-            val key = "${task.id}|$kind|${dayFmt.format(Instant.ofEpochMilli(triggerAt).atZone(zone()).toLocalDate())}"
+        for (planned in ReminderPlan.planFor(task.id, due, task.dueHasTime, d3, d1, d0, zone(), now)) {
             val entity = ReminderEntity(
                 taskId = task.id,
                 projectId = task.projectId,
-                kind = kind,
-                triggerAt = triggerAt,
+                kind = planned.kind,
+                triggerAt = planned.triggerAt,
                 requestCode = 0,
-                dedupeKey = key
+                dedupeKey = planned.dedupeKey
             )
             // dedupeKey 唯一索引 + IGNORE：重复 key 插不进去（返回 -1），天然幂等
             val id = dao.insert(entity)
@@ -90,13 +82,6 @@ class ReminderRepo(private val db: AppDatabase) {
                 dao.updateRequestCode(id, id.toInt())
                 out.add(entity.copy(id = id, requestCode = id.toInt()))
             }
-        }
-
-        if (d3) add(ReminderKind.D3, at(dueDate.minusDays(3), LocalTime.of(9, 0)))
-        if (d1) add(ReminderKind.D1, at(dueDate.minusDays(1), LocalTime.of(9, 0)))
-        if (d0) {
-            val t = if (task.dueHasTime) due - 2 * 3600_000L else at(dueDate, LocalTime.of(9, 0))
-            add(ReminderKind.D0, t)
         }
         return out
     }
@@ -150,4 +135,49 @@ class ReminderRepo(private val db: AppDatabase) {
 
     private fun at(date: LocalDate, time: LocalTime): Long =
         date.atTime(time).atZone(zone()).toInstant().toEpochMilli()
+}
+
+/**
+ * 提醒档位计划（纯逻辑，无数据库依赖，供单元测试）：
+ * 给定任务与三档开关，算出应生成的 kind / triggerAt / dedupeKey 列表。
+ * 落库由 ReminderRepo 负责（dedupeKey 唯一索引 + IGNORE 保证幂等）。
+ */
+object ReminderPlan {
+
+    data class Planned(val kind: String, val triggerAt: Long, val dedupeKey: String)
+
+    private val keyFmt = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd")
+
+    fun planFor(
+        taskId: String,
+        dueAt: Long,
+        dueHasTime: Boolean,
+        d3: Boolean,
+        d1: Boolean,
+        d0: Boolean,
+        zone: ZoneId,
+        now: Long
+    ): List<Planned> {
+        val dueDate = java.time.Instant.ofEpochMilli(dueAt).atZone(zone).toLocalDate()
+        val out = ArrayList<Planned>(3)
+
+        fun at(date: LocalDate, time: LocalTime): Long =
+            date.atTime(time).atZone(zone).toInstant().toEpochMilli()
+
+        fun add(kind: String, triggerAt: Long) {
+            // 已过期（含 1 分钟缓冲）的档位直接跳过，不给刚建的任务连环补发旧提醒
+            if (triggerAt <= now + 60_000) return
+            val date = keyFmt.format(java.time.Instant.ofEpochMilli(triggerAt).atZone(zone).toLocalDate())
+            out.add(Planned(kind, triggerAt, "$taskId|$kind|$date"))
+        }
+
+        if (d3) add(ReminderKind.D3, at(dueDate.minusDays(3), LocalTime.of(9, 0)))
+        if (d1) add(ReminderKind.D1, at(dueDate.minusDays(1), LocalTime.of(9, 0)))
+        if (d0) {
+            // 有具体时刻提前 2 小时；否则当天早上 9 点
+            val t = if (dueHasTime) dueAt - 2 * 3600_000L else at(dueDate, LocalTime.of(9, 0))
+            add(ReminderKind.D0, t)
+        }
+        return out
+    }
 }

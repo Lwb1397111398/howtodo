@@ -5,6 +5,12 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# 同一分支连续推送时只构建最新一次：中途的构建直接取消，
+# 避免 Release 被旧提交的包覆盖或两条流水线同时写 latest
+concurrency:
+  group: build-release-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
 
@@ -28,6 +34,10 @@ jobs:
         with:
           gradle-version: '8.9'
 
+      # 测试门禁：单测失败则整个 job 停止，不会把坏包发到 Release
+      - name: Run unit tests (gate)
+        run: gradle --no-daemon testDebugUnitTest
+
       - name: Build release APK
         run: gradle --no-daemon assembleRelease
 
@@ -44,6 +54,10 @@ jobs:
           # 固定资产名：App 端按 .apk 结尾匹配，镜像直链可长期不变
           cp "$APK_SRC" howtodo-release.apk
 
+          # 混淆映射：留给崩溃堆栈反解用（release 开了 minify，正常都在）
+          MAPPING_SRC="app/build/outputs/mapping/release/mapping.txt"
+          [ -f "$MAPPING_SRC" ] && cp "$MAPPING_SRC" mapping.txt || true
+
           # 第一行元数据注释是 App 更新检查的唯一解析入口（GitHub 页面渲染不可见）
           {
             printf '<!-- appupdate versionCode=%s versionName=%s -->\n' "$VC" "$VN"
@@ -51,10 +65,13 @@ jobs:
             git log -5 --pretty=format:'- %s'
           } > notes.md
 
+          ASSETS=(howtodo-release.apk)
+          [ -f mapping.txt ] && ASSETS+=(mapping.txt)
+
           if gh release view latest --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload latest howtodo-release.apk --clobber --repo "$GITHUB_REPOSITORY"
+            gh release upload latest "${ASSETS[@]}" --clobber --repo "$GITHUB_REPOSITORY"
             gh release edit latest --title "HowTodo ${VN}" --notes-file notes.md --repo "$GITHUB_REPOSITORY"
           else
-            gh release create latest howtodo-release.apk --title "HowTodo ${VN}" --notes-file notes.md --repo "$GITHUB_REPOSITORY"
+            gh release create latest "${ASSETS[@]}" --title "HowTodo ${VN}" --notes-file notes.md --repo "$GITHUB_REPOSITORY"
           fi
           echo "Published HowTodo ${VN} (versionCode=${VC})"

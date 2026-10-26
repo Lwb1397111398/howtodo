@@ -220,61 +220,9 @@ class ProposalRepo(private val db: AppDatabase) {
         proposal: ProposalEntity,
         item: ProposalItemEntity
     ): Boolean {
-        val changes = payload.getAsJsonObject("changes") ?: payload
         val before = gson.toJson(target)
-        var t = target
-        var changed = false
-
-        changes.get("title")?.takeIf { !it.isJsonNull }?.asString?.let {
-            if (it.isNotBlank() && it != t.title) {
-                t = t.copy(title = it); changed = true
-            }
-        }
-        changes.get("detail")?.takeIf { !it.isJsonNull }?.asString?.let {
-            if (it != t.detail) {
-                t = t.copy(detail = it); changed = true
-            }
-        }
-        if (changes.has("dueAt")) {
-            val el = changes.get("dueAt")
-            val newDue = if (el.isJsonNull) null else el.asLong
-            if (newDue != t.dueAt) {
-                t = t.copy(dueAt = newDue); changed = true
-            }
-        }
-        changes.get("dueHasTime")?.takeIf { !it.isJsonNull }?.asBoolean?.let {
-            if (it != t.dueHasTime) {
-                t = t.copy(dueHasTime = it); changed = true
-            }
-        }
-        changes.get("dueRaw")?.takeIf { !it.isJsonNull }?.asString?.let {
-            if (it != t.dueRaw) {
-                t = t.copy(dueRaw = it); changed = true
-            }
-        }
-        changes.get("priority")?.takeIf { !it.isJsonNull }?.asInt?.let {
-            if (it != t.priority) {
-                t = t.copy(priority = it); changed = true
-            }
-        }
-        changes.get("assumption")?.takeIf { !it.isJsonNull }?.asString?.let {
-            if (it != t.assumption) {
-                t = t.copy(assumption = it); changed = true
-            }
-        }
-
-        if (!changed) return false
-
-        // 补上日期后，原来"待确认"的任务自动转为待办
-        var status = t.status
-        if (status == TaskStatus.NEEDS_CONFIRM && t.dueAt != null) status = TaskStatus.TODO
-
-        val after = t.copy(
-            status = status,
-            lastBatchId = proposal.batchId,
-            rev = t.rev + 1,
-            updatedAt = System.currentTimeMillis()
-        )
+        val after = patchTask(target, payload, proposal.batchId, System.currentTimeMillis())
+            ?: return false
         taskDao.update(after)
         itemDao.setResult(item.id, after.id)
         writeEvidence(after.id, item, proposal)
@@ -365,4 +313,66 @@ class ProposalRepo(private val db: AppDatabase) {
     } catch (_: Throwable) {
         JsonObject()
     }
+}
+
+/**
+ * 补丁应用纯逻辑（供单测）：把 payload 里的 changes 逐字段套到任务上。
+ * 返回 null 表示没有任何实际变化（调用方不写库、不留日志）。
+ * DONE 任务的覆盖保护在 ProposalRepo.apply() 里，这里不重复判断。
+ */
+internal fun patchTask(target: TaskEntity, payload: JsonObject, batchId: String, now: Long): TaskEntity? {
+    val changes = payload.getAsJsonObject("changes") ?: payload
+    var t = target
+    var changed = false
+
+    changes.get("title")?.takeIf { !it.isJsonNull }?.asString?.let {
+        if (it.isNotBlank() && it != t.title) {
+            t = t.copy(title = it); changed = true
+        }
+    }
+    changes.get("detail")?.takeIf { !it.isJsonNull }?.asString?.let {
+        if (it != t.detail) {
+            t = t.copy(detail = it); changed = true
+        }
+    }
+    if (changes.has("dueAt")) {
+        val el = changes.get("dueAt")
+        val newDue = if (el.isJsonNull) null else el.asLong
+        if (newDue != t.dueAt) {
+            t = t.copy(dueAt = newDue); changed = true
+        }
+    }
+    changes.get("dueHasTime")?.takeIf { !it.isJsonNull }?.asBoolean?.let {
+        if (it != t.dueHasTime) {
+            t = t.copy(dueHasTime = it); changed = true
+        }
+    }
+    changes.get("dueRaw")?.takeIf { !it.isJsonNull }?.asString?.let {
+        if (it != t.dueRaw) {
+            t = t.copy(dueRaw = it); changed = true
+        }
+    }
+    changes.get("priority")?.takeIf { !it.isJsonNull }?.asInt?.let {
+        if (it != t.priority) {
+            t = t.copy(priority = it); changed = true
+        }
+    }
+    changes.get("assumption")?.takeIf { !it.isJsonNull }?.asString?.let {
+        if (it != t.assumption) {
+            t = t.copy(assumption = it); changed = true
+        }
+    }
+
+    if (!changed) return null
+
+    // 补上日期后，原来"待确认"的任务自动转为待办
+    var status = t.status
+    if (status == TaskStatus.NEEDS_CONFIRM && t.dueAt != null) status = TaskStatus.TODO
+
+    return t.copy(
+        status = status,
+        lastBatchId = batchId,
+        rev = t.rev + 1,
+        updatedAt = now
+    )
 }
